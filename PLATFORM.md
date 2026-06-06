@@ -66,7 +66,7 @@ Zephyrwerk's operations team is making critical decisions without adequate data 
 The platform is structured in three capability layers:
 
 ### Layer 1 — Historical Intelligence ("Show us what happened")
-Understand Germany's energy production history: which sources dominate, how consumption patterns shift across seasons, how the energy mix has evolved as renewables scaled from 2018 to present.
+Understand Germany's energy production history: which sources dominate, how consumption patterns shift across seasons, how the energy mix has evolved as renewables scaled from 2019 to present.
 
 ### Layer 2 — Operational Monitoring ("Show us what's happening now")
 A scheduled pipeline that ingests fresh SMARD data daily, keeps the data warehouse current, and powers a dashboard the ops team checks every morning. Answers: Is today's renewable output above or below seasonal average? Is the grid stressed?
@@ -85,7 +85,7 @@ Two ML models:
 **API Base:** `https://www.smard.de/app/chart_data/{filter}/{region}/`  
 **License:** CC BY 4.0 — free to download, store, and use  
 **Resolution:** Quarter-hourly and hourly available  
-**History:** 2018 to present  
+**History:** 2019 to present  
 **Update frequency:** Near real-time (hourly updates)
 
 Signals ingested:
@@ -147,7 +147,7 @@ The spread is computed as `neighbour_price − DE/LU_price` (filter `4169`) per 
 **License:** Free for non-commercial use  
 **Purpose:** Weather features for ML models  
 
-> ⚠️ **NOTE (affects Phase 1):** Open-Meteo serves *forecast* and *recent* data through one API, but historical weather back to 2018 comes from a **separate endpoint — the Historical Weather API (ERA5 reanalysis archive)**. For backfilling training data you must use the Historical Weather API; for the daily production run you use the Forecast API. These are two different base URLs and the weather client must handle both. Verify date coverage and rate limits for each in Phase 1.
+> ⚠️ **NOTE (affects Phase 1):** Open-Meteo serves *forecast* and *recent* data through one API, but historical weather back to 2019 comes from a **separate endpoint — the Historical Weather API (ERA5 reanalysis archive)**. For backfilling training data you must use the Historical Weather API; for the daily production run you use the Forecast API. These are two different base URLs and the weather client must handle both. Verify date coverage and rate limits for each in Phase 1.
 
 Signals ingested for key German regions (Berlin, Munich, Hamburg, Frankfurt):
 
@@ -165,7 +165,7 @@ The platform has **two distinct ingestion modes** with different code paths. The
 
 | Mode | When | Source coverage | Trigger |
 |---|---|---|---|
-| **Backfill (historical)** | One-time, during Phase 1 | 2018 → present (full history) | Run manually |
+| **Backfill (historical)** | One-time, during Phase 1 | 2019 → present (full history) | Run manually |
 | **Incremental (daily)** | Ongoing, in production | Yesterday's data only | EventBridge daily |
 
 Both modes write to the same S3 raw layer with the same partitioning. The difference is the date range requested and idempotency: the incremental run must safely overwrite/upsert a day that may have been partially ingested before (SMARD revises recent data). Design ingestion functions to accept a `start_date` / `end_date` parameter so the same code serves both modes.
@@ -353,10 +353,10 @@ The RDS connection password is stored in Secrets Manager under `zephyrwerk/rds/c
 s3://zephyrwerk-data-lake/
 ├── raw/
 │   ├── smard/
-│   │   ├── year=2018/month=01/smard_20180101.parquet
+│   │   ├── year=2019/month=01/smard_20190101.parquet
 │   │   └── ...
 │   └── weather/
-│       ├── year=2018/month=01/weather_20180101.parquet
+│       ├── year=2019/month=01/weather_20190101.parquet
 │       └── ...
 ├── models/
 │   ├── price_forecast/
@@ -450,7 +450,7 @@ dim_date   -- populated via dbt seed (CSV) or generated with a date-spine macro,
 
 ### Deployment Ordering (train before first API deploy)
 
-There is plenty of data (2018–present) to train a fully capable model from day one — this is not a data problem. It is simply a sequencing reminder: a serialized `.pkl` must exist in S3 before the API tries to load it.
+There is plenty of data (2019–present) to train a fully capable model from day one — this is not a data problem. It is simply a sequencing reminder: a serialized `.pkl` must exist in S3 before the API tries to load it.
 
 So on first deployment: run the training job once → confirm the `.pkl` files are in S3 → then deploy/start the API. The API should also return a clear error (HTTP 503 "model not available") rather than crashing if a model file is ever missing, since the dashboard's Forecast page depends on these endpoints.
 
@@ -502,7 +502,7 @@ POST /predict/generation
 ### Pages
 
 **Page 1 — Historical Overview**
-- Germany energy mix evolution (2018–present) — stacked area chart
+- Germany energy mix evolution (2019–present) — stacked area chart
 - Renewable share trend by year — line chart
 - Seasonal generation patterns (avg by month) — heatmap
 - Price distribution by season — box plot
@@ -600,7 +600,7 @@ v1.0.0 — Phase 7 complete: Full AWS cloud deployment
 
 Deliverables:
 - Project scaffold with folder structure, `pyproject.toml`, `.env` management
-- SMARD ingestion client — supports both backfill (2018–present) and incremental (single day) modes via `start_date`/`end_date` params
+- SMARD ingestion client — supports both backfill (2019–present) and incremental (single day) modes via `start_date`/`end_date` params
 - Open-Meteo ingestion client — handles **both** the Historical Weather API (backfill) and Forecast API (daily), weather signals for 4 German regions
 - S3 uploader — writes partitioned Parquet files to raw layer, idempotent for re-runs
 - One-time historical backfill executed and verified in S3
@@ -619,7 +619,7 @@ New skills: boto3 S3 client, Parquet with pyarrow, LocalStack, environment confi
 
 Deliverables:
 - Structured Jupyter notebooks in `notebooks/eda/`
-- Analysis: energy mix shift 2018–2025, price spike patterns, renewable seasonality, consumption patterns, neighbour price spreads
+- Analysis: energy mix shift 2019–2025, price spike patterns, renewable seasonality, consumption patterns, neighbour price spreads
 - Key findings documented in `notebooks/eda/FINDINGS.md`
 - Data quality issues identified and logged for dbt handling
 
