@@ -1,0 +1,15 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  scaffold:
+    name: Deploy scaffold (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm deploy workflow is wired
+        run: echo "Deploy placeholder — ECR push and ECS deploy added in Phase 7"

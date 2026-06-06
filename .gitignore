@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments / uv
+.venv/
+venv/
+.uv/
+
+# Secrets
+.env
+.env.local
+*.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# ML artifacts — live in S3, not Git
+*.pkl
+*.joblib
+
+# AWS
+.aws/
+
+# Docker override (local tweaks, never committed)
+docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/

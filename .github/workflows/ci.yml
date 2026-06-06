@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  scaffold:
+    name: CI scaffold (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm CI is wired
+        run: echo "CI placeholder — real jobs added in Phase 3 (dbt) and Phase 5 (pytest)"
