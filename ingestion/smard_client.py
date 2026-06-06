@@ -1,0 +1,136 @@
+"""
+SMARD client for fetching time series data from the SMARD API.
+
+This module provides utilities to retrieve power generation, consumption,
+and price signals for German and neighboring regions using the SMARD
+chart_data endpoints. It supports multiple resolutions and returns data
+as pandas DataFrames.
+"""
+
+import logging
+from typing import Union
+
+import requests
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://www.smard.de/app/chart_data"
+ 
+class Resolution(Enum):
+    HOUR = "hour"
+    QUARTER_HOUR = "quarter-hour"
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    YEAR = "year"
+
+class ENERGY_SOURCE(Enum):
+    WIND_ONSHORE = 4067
+    WIND_OFFSHORE = 1225
+    SOLAR = 4068
+    BIOMASS = 4066
+    HYDROPOWER = 1226
+    PUMPED_STORAGE = 4070
+    NATURAL_GAS = 4071
+    HARD_COAL = 4069
+    BROWN_COAL = 1223
+    NUCLEAR = 1224
+    OTHER_CONVENTIONAL = 1227
+    OTHER_RENEWABLE = 1228
+
+class NEIGHBORING_REGION(Enum):
+    DE_LU = 4169
+    AUSTRIA = 4170
+    FRANCE = 254
+    NETHERLANDS = 256
+    POLAND = 257
+    SWITZERLAND = 259
+    CZECHIA = 261
+    DENMARK_1 = 252
+    DENMARK_2 = 253
+
+class CONSUMPTION_TYPE(Enum):
+    TOTAL_CONSUMPTION = 410
+    RESIDUAL_LOAD = 4359
+
+class REGION(Enum):
+    DE = "DE"
+    DE_LU = "DE-LU"
+
+
+# Calls the index endpoint, returns the list of week timestamps as integers.
+def _get_index(filter_id: int, region: REGION, resolution: Resolution) -> list:
+    url = f"{BASE_URL}/{filter_id}/{region.value}/index_{resolution.value}.json"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json().get("timestamps", [])
+
+# Calls the series endpoint for one week, returns the raw series list of [timestamp_ms, value] pairs.
+def _get_series(filter_id: int, region: REGION, resolution: Resolution, timestamp: int) -> list:
+    url = f"{BASE_URL}/{filter_id}/{region.value}/{filter_id}_{region.value}_{resolution.value}_{timestamp}.json"
+    logger.debug("Fetching data from URL: %s", url)
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json().get("series", [])
+
+def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], start_date: datetime, end_date: datetime, resolution: Resolution = Resolution.HOUR) -> pd.DataFrame:
+    filter_id = signal_name.value if isinstance(signal_name, Enum) else None
+    if filter_id is None:
+        raise ValueError(f"Unsupported signal name: {signal_name}. Must be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.")
+
+    region, unit = REGION.DE, "MW"
+    if isinstance(signal_name, NEIGHBORING_REGION):
+        region = REGION.DE_LU
+        unit = "EUR_MWH"
+
+    # Get the index for the specified filter_id, region, and resolution
+    valid_timestamps = _get_index(filter_id, region, resolution)
+    if not valid_timestamps:
+        raise ValueError(f"No timestamps found in index for signal '{signal_name}' with filter_id {filter_id} and region {region.value}.")
+    
+    # Filter the index to get the relevant timestamps for the specified date range.
+    # Each ts marks the start of a weekly chunk, so we must include the chunk whose
+    # start is before start_date but whose data covers start_date (last ts <= start_timestamp).
+    start_timestamp = int(start_date.timestamp() * 1000)  # Convert to milliseconds
+    end_timestamp = int(end_date.timestamp() * 1000)      # Convert to milliseconds
+    before_start = [ts for ts in valid_timestamps if ts <= start_timestamp]
+    first_ts = before_start[-1] if before_start else valid_timestamps[0]
+    relevant_timestamps = [ts for ts in valid_timestamps if first_ts <= ts <= end_timestamp]
+
+    # Fetch the series data for each relevant timestamp and aggregate into a DataFrame
+    data_frames = []
+    for ts in relevant_timestamps:
+        series = _get_series(filter_id, region, resolution, ts)
+        if not series:
+            continue  # Skip if no data is returned for this timestamp
+
+        df = pd.DataFrame(series, columns=["timestamp_ms", "value"])
+        df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit='ms', utc=True)
+        df["value"] = pd.to_numeric(df["value"], errors='coerce')
+        df.drop(columns=["timestamp_ms"], inplace=True)
+        
+        data_frames.append(df)
+    
+    data_frames = pd.concat(data_frames, ignore_index=True) if data_frames else pd.DataFrame(columns=["timestamp", "value"])
+    data_frames["signal"] = signal_name.name
+    data_frames["unit"] = unit
+
+    # Filter the final DataFrame to ensure it only contains data within the specified date range
+    result = data_frames[(data_frames["timestamp"] >= pd.Timestamp(start_date).tz_convert("UTC")) & (data_frames["timestamp"] <= pd.Timestamp(end_date).tz_convert("UTC"))]
+    return result.sort_values("timestamp").reset_index(drop=True)
+
+if __name__ == "__main__":
+    start_date = datetime.now(timezone.utc) - timedelta(days=7)
+    end_date = datetime.now(timezone.utc)
+    
+    df = fetch_range(ENERGY_SOURCE.WIND_ONSHORE, start_date, end_date, Resolution.HOUR)
+    print(df.head())
+    print(len(df))
+    print(df["value"].isna().sum())
+
+    df2 = fetch_range(NEIGHBORING_REGION.FRANCE, start_date, end_date, Resolution.HOUR)
+    print(df2.head())
+    print(df2["unit"].unique())
