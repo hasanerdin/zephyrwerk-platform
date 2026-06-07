@@ -61,7 +61,7 @@ class REGION(Enum):
     DE_LU = "DE-LU"
 
 
-def _get_index(filter_id: int, region: REGION, resolution: Resolution) -> list:
+def _get_index(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: Resolution) -> list:
     """" Fetches the index of available timestamps for a given filter_id, region, and resolution.
         
     param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
@@ -69,12 +69,12 @@ def _get_index(filter_id: int, region: REGION, resolution: Resolution) -> list:
     param: resolution: The desired data resolution (e.g. Resolution.HOUR).
     return: a list of timestamps (in milliseconds) that mark the start of each weekly chunk of data available for the specified filter_id and region.
     """
-    url = f"{BASE_URL}/{filter_id}/{region.value}/index_{resolution.value}.json"
+    url = f"{BASE_URL}/{filter_id.value}/{region.value}/index_{resolution.value}.json"
     response = requests.get(url)
     response.raise_for_status()
     return response.json().get("timestamps", [])
 
-def _get_series(filter_id: int, region: REGION, resolution: Resolution, timestamp: int) -> list:
+def _get_series(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: Resolution, timestamp: int) -> list:
     """ Fetches the time series data for a given filter_id, region, resolution, and timestamp.
     
     param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
@@ -85,7 +85,7 @@ def _get_series(filter_id: int, region: REGION, resolution: Resolution, timestam
     return: a list of [timestamp_ms, value] pairs representing the time series data for the specified filter_id, region, resolution, and timestamp. 
             Each pair consists of a timestamp in milliseconds and the corresponding value for that timestamp.
     """
-    url = f"{BASE_URL}/{filter_id}/{region.value}/{filter_id}_{region.value}_{resolution.value}_{timestamp}.json"
+    url = f"{BASE_URL}/{filter_id.value}/{region.value}/{filter_id.value}_{region.value}_{resolution.value}_{timestamp}.json"
     logger.debug("Fetching data from URL: %s", url)
     response = requests.get(url)
     response.raise_for_status()
@@ -105,7 +105,7 @@ def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_
             The DataFrame has columns "timestamp" (as a timezone-aware datetime in UTC), "value" (as a numeric value), "signal" (the name of the signal), and "unit" (the unit of the values).
     """
     
-    filter_id = signal_name.value if isinstance(signal_name, Enum) else None
+    filter_id = signal_name if isinstance(signal_name, Enum) else None
     if filter_id is None:
         raise ValueError(f"Unsupported signal name: {signal_name}. Must be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.")
 
@@ -139,6 +139,9 @@ def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_
         df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit='ms', utc=True)
         df["value"] = pd.to_numeric(df["value"], errors='coerce')
         df.drop(columns=["timestamp_ms"], inplace=True)
+        
+        # order columns as desired and keep only timestamp and value for now, we'll add signal and unit later
+        df = df[["timestamp", "value"]]
         
         data_frames.append(df)
     
