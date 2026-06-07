@@ -61,22 +61,50 @@ class REGION(Enum):
     DE_LU = "DE-LU"
 
 
-# Calls the index endpoint, returns the list of week timestamps as integers.
 def _get_index(filter_id: int, region: REGION, resolution: Resolution) -> list:
+    """" Fetches the index of available timestamps for a given filter_id, region, and resolution.
+        
+    param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
+    param: region: The region for which to fetch the data (e.g. REGION.DE).
+    param: resolution: The desired data resolution (e.g. Resolution.HOUR).
+    return: a list of timestamps (in milliseconds) that mark the start of each weekly chunk of data available for the specified filter_id and region.
+    """
     url = f"{BASE_URL}/{filter_id}/{region.value}/index_{resolution.value}.json"
     response = requests.get(url)
     response.raise_for_status()
     return response.json().get("timestamps", [])
 
-# Calls the series endpoint for one week, returns the raw series list of [timestamp_ms, value] pairs.
 def _get_series(filter_id: int, region: REGION, resolution: Resolution, timestamp: int) -> list:
+    """ Fetches the time series data for a given filter_id, region, resolution, and timestamp.
+    
+    param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
+    param: region: The region for which to fetch the data (e.g. REGION.DE).
+    param: resolution: The desired data resolution (e.g. Resolution.HOUR).
+    param: timestamp: The timestamp (in milliseconds) that marks the start of the weekly chunk of data to fetch. 
+                      This timestamp should be one of the values returned by the _get_index function for the specified filter_id, region, and resolution.
+    return: a list of [timestamp_ms, value] pairs representing the time series data for the specified filter_id, region, resolution, and timestamp. 
+            Each pair consists of a timestamp in milliseconds and the corresponding value for that timestamp.
+    """
     url = f"{BASE_URL}/{filter_id}/{region.value}/{filter_id}_{region.value}_{resolution.value}_{timestamp}.json"
     logger.debug("Fetching data from URL: %s", url)
     response = requests.get(url)
     response.raise_for_status()
     return response.json().get("series", [])
 
-def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], start_date: datetime, end_date: datetime, resolution: Resolution = Resolution.HOUR) -> pd.DataFrame:
+def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
+                start_date: datetime, 
+                end_date: datetime, 
+                resolution: Resolution = Resolution.HOUR
+                ) -> pd.DataFrame:
+    """ Fetches time series data for a given signal, date range, and resolution from the SMARD API.
+    param: signal_name: The name of the signal to fetch. This can be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.
+    param: start_date: The start date of the desired date range (inclusive).
+    param: end_date: The end date of the desired date range (inclusive).
+    param: resolution: The desired data resolution (e.g. Resolution.HOUR). Default is Resolution.HOUR.
+    return: A pandas DataFrame containing the time series data for the specified signal, date range, and resolution. 
+            The DataFrame has columns "timestamp" (as a timezone-aware datetime in UTC), "value" (as a numeric value), "signal" (the name of the signal), and "unit" (the unit of the values).
+    """
+    
     filter_id = signal_name.value if isinstance(signal_name, Enum) else None
     if filter_id is None:
         raise ValueError(f"Unsupported signal name: {signal_name}. Must be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.")
