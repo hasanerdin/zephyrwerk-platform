@@ -16,6 +16,7 @@ EXPECTED_KEY = "raw/smard/year=2024/month=01/smard_2024_01_15.parquet"
 @pytest.fixture
 def fake_s3(monkeypatch):
     monkeypatch.setenv("ZEPHYRWERK_AWS_BUCKET_NAME", BUCKET)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
