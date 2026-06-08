@@ -2,7 +2,7 @@
 ### Master Reference Document
 > This document is the single source of truth for the entire project.
 > It must be shared at the start of every phase chat to maintain context.
-> Version: 1.4 | Status: Planning Complete
+> Version: 1.6 | Status: Planning Complete
 
 ---
 
@@ -92,7 +92,7 @@ Signals ingested:
 
 > ✅ **VERIFIED** against the official `smard.api.bund.dev` parameter list. Region code and resolution confirmed below.
 
-**Region:** `DE-LU` (market area DE/LU, valid from 01.10.2018 — matches our history window). For generation/consumption volumes, `DE` is also valid; use `DE-LU` for prices since the day-ahead market is the DE/LU bidding zone.
+**Region:** `DE-LU` for prices (day-ahead market bidding zone). For generation/consumption volumes, `DE` is also valid. **History starts 2019-01-01** — the DE/LU market area came into effect 01.10.2018, meaning 2018 contains a mixed region structure (DE/AT/LU before October, DE/LU after). Starting from 2019 gives a clean, consistent region across the full dataset with no structural breaks to handle.
 
 **Resolution:** `hour` (hourly) for the analytical base. `quarterhour` available if finer granularity is wanted later.
 
@@ -149,7 +149,16 @@ The spread is computed as `neighbour_price − DE/LU_price` (filter `4169`) per 
 
 > ⚠️ **NOTE (affects Phase 1):** Open-Meteo serves *forecast* and *recent* data through one API, but historical weather back to 2019 comes from a **separate endpoint — the Historical Weather API (ERA5 reanalysis archive)**. For backfilling training data you must use the Historical Weather API; for the daily production run you use the Forecast API. These are two different base URLs and the weather client must handle both. Verify date coverage and rate limits for each in Phase 1.
 
-Signals ingested for key German regions (Berlin, Munich, Hamburg, Frankfurt):
+Signals ingested for **4 locations co-located with Zephyrwerk's generation assets** (see rationale below):
+
+| Location key | Coordinates | Asset type | Why |
+|---|---|---|---|
+| `wind_region_brandenburg` | 52.41°N, 12.53°E | Wind (onshore) | Center of Zephyrwerk's Brandenburg wind farm region |
+| `wind_region_schleswig` | 54.51°N, 9.55°E | Wind (onshore + offshore proximity) | Center of Schleswig-Holstein wind farms, close to North Sea |
+| `solar_region_bavaria` | 48.13°N, 11.58°E | Solar | Center of Bavarian solar parks |
+| `solar_region_bawue` | 48.77°N, 9.18°E | Solar | Center of Baden-Württemberg solar parks |
+
+> **Rationale:** Weather locations are chosen to match Zephyrwerk's actual asset geography, not major population centres. Wind speed in Brandenburg directly predicts Brandenburg wind farm output; solar irradiance near Munich/Stuttgart directly predicts Bavarian and BW solar output. This makes the ML features physically meaningful and the design decision defensible. Open-Meteo returns data per coordinate — asset-aligned coordinates are always more appropriate than nearest city for renewable generation modelling.
 
 | Signal | Purpose |
 |---|---|
@@ -165,7 +174,7 @@ The platform has **two distinct ingestion modes** with different code paths. The
 
 | Mode | When | Source coverage | Trigger |
 |---|---|---|---|
-| **Backfill (historical)** | One-time, during Phase 1 | 2019 → present (full history) | Run manually |
+| **Backfill (historical)** | One-time, during Phase 1 | 2019-01-01 → present (full history) | Run manually |
 | **Incremental (daily)** | Ongoing, in production | Yesterday's data only | EventBridge daily |
 
 Both modes write to the same S3 raw layer with the same partitioning. The difference is the date range requested and idempotency: the incremental run must safely overwrite/upsert a day that may have been partially ingested before (SMARD revises recent data). Design ingestion functions to accept a `start_date` / `end_date` parameter so the same code serves both modes.
@@ -433,10 +442,14 @@ dim_date   -- populated via dbt seed (CSV) or generated with a date-spine macro,
 |---|---|
 | Hour of day | Derived |
 | Month / Season | Derived |
-| Wind speed at 100m | Open-Meteo |
-| Wind direction | Open-Meteo |
-| Solar irradiance | Open-Meteo |
-| Cloud cover | Open-Meteo |
+| Wind speed at 100m — `wind_region_brandenburg` | Open-Meteo |
+| Wind speed at 100m — `wind_region_schleswig` | Open-Meteo |
+| Wind direction — `wind_region_brandenburg` | Open-Meteo |
+| Wind direction — `wind_region_schleswig` | Open-Meteo |
+| Solar irradiance — `solar_region_bavaria` | Open-Meteo |
+| Solar irradiance — `solar_region_bawue` | Open-Meteo |
+| Cloud cover — `solar_region_bavaria` | Open-Meteo |
+| Cloud cover — `solar_region_bawue` | Open-Meteo |
 | Previous day wind generation (lag) | SMARD lag |
 | Previous day solar generation (lag) | SMARD lag |
 
@@ -600,7 +613,7 @@ v1.0.0 — Phase 7 complete: Full AWS cloud deployment
 
 Deliverables:
 - Project scaffold with folder structure, `pyproject.toml`, `.env` management
-- SMARD ingestion client — supports both backfill (2019–present) and incremental (single day) modes via `start_date`/`end_date` params
+- SMARD ingestion client — supports both backfill (2019-01-01 → present) and incremental (single day) modes via `start_date`/`end_date` params
 - Open-Meteo ingestion client — handles **both** the Historical Weather API (backfill) and Forecast API (daily), weather signals for 4 German regions
 - S3 uploader — writes partitioned Parquet files to raw layer, idempotent for re-runs
 - One-time historical backfill executed and verified in S3
@@ -966,5 +979,5 @@ zephyrwerk-platform/
 ---
 
 *Document maintained by: Hasan Erdin*  
-*Last updated: May 2026 — v1.4: Verified all SMARD filter IDs against official list; fixed total-consumption ID (410, not 4359); added nuclear/other/pumped-storage signals + forecast generation filters; specified region DE-LU and hourly resolution; replaced non-existent cross-border flows with neighbour price-spread analysis (option b) across all models, features, dashboard, EDA, and folder structure*  
+*Last updated: May 2026 — v1.6: Changed history start date from 2018 to 2019-01-01 across all references (backfill, S3 paths, EDA, dashboard, ML); documented reason — DE/LU market area only fully active from 01.10.2018, starting 2019 avoids the mixed DE/AT/LU → DE/LU structural break*  
 *Next update: After Phase 1 completion*
