@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.smard.de/app/chart_data"
  
-class Resolution(Enum):
+class RESOLUTION(Enum):
     HOUR = "hour"
     QUARTER_HOUR = "quarter-hour"
     DAY = "day"
@@ -60,8 +60,41 @@ class REGION(Enum):
     DE = "DE"
     DE_LU = "DE-LU"
 
+class Units(Enum):
+    MW = "MW"
+    EUR_MWH = "EUR_MWH"
 
-def _get_index(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: Resolution) -> list:
+SMARD_SIGNALS = {
+    # Generation (region: DE, unit: MW)
+    ENERGY_SOURCE.WIND_ONSHORE:             {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.WIND_OFFSHORE:            {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.SOLAR:                    {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.BIOMASS:                  {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.HYDROPOWER:               {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.PUMPED_STORAGE:           {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.NATURAL_GAS:              {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.HARD_COAL:                {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.BROWN_COAL:               {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.NUCLEAR:                  {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.OTHER_CONVENTIONAL:       {"region": REGION.DE, "unit": Units.MW},
+    ENERGY_SOURCE.OTHER_RENEWABLE:          {"region": REGION.DE, "unit": Units.MW},
+    # Consumption (region: DE, unit: MW)
+    CONSUMPTION_TYPE.TOTAL_CONSUMPTION :    {"region": REGION.DE, "unit": Units.MW},
+    CONSUMPTION_TYPE.RESIDUAL_LOAD :        {"region": REGION.DE, "unit": Units.MW},
+    # DE and Neighbour prices (region: DE-LU, unit: EUR_MWH)
+    NEIGHBORING_REGION.DE_LU:               {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.AUSTRIA:             {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.FRANCE:              {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.NETHERLANDS:         {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.POLAND:              {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.SWITZERLAND:         {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.CZECHIA:             {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.DENMARK_1:           {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+    NEIGHBORING_REGION.DENMARK_2:           {"region": REGION.DE_LU, "unit": Units.EUR_MWH},
+}
+
+
+def _get_index(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: RESOLUTION) -> list:
     """" Fetches the index of available timestamps for a given filter_id, region, and resolution.
         
     param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
@@ -74,7 +107,7 @@ def _get_index(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REG
     response.raise_for_status()
     return response.json().get("timestamps", [])
 
-def _get_series(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: Resolution, timestamp: int) -> list:
+def _get_series(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], region: REGION, resolution: RESOLUTION, timestamp: int) -> list:
     """ Fetches the time series data for a given filter_id, region, resolution, and timestamp.
     
     param: filter_id: The SMARD filter ID corresponding to the signal we want to fetch (e.g. 4067 for onshore wind generation).
@@ -91,10 +124,12 @@ def _get_series(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_RE
     response.raise_for_status()
     return response.json().get("series", [])
 
-def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
+def _fetch_range_single_signal(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
                 start_date: datetime, 
                 end_date: datetime, 
-                resolution: Resolution = Resolution.HOUR
+                region: REGION = REGION.DE,
+                unit: Units = Units.MW,
+                resolution: RESOLUTION = RESOLUTION.HOUR
                 ) -> pd.DataFrame:
     """ Fetches time series data for a given signal, date range, and resolution from the SMARD API.
     param: signal_name: The name of the signal to fetch. This can be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.
@@ -108,11 +143,6 @@ def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_
     filter_id = signal_name if isinstance(signal_name, Enum) else None
     if filter_id is None:
         raise ValueError(f"Unsupported signal name: {signal_name}. Must be an instance of ENERGY_SOURCE, CONSUMPTION_TYPE, or NEIGHBORING_REGION.")
-
-    region, unit = REGION.DE, "MW"
-    if isinstance(signal_name, NEIGHBORING_REGION):
-        region = REGION.DE_LU
-        unit = "EUR_MWH"
 
     # Get the index for the specified filter_id, region, and resolution
     valid_timestamps = _get_index(filter_id, region, resolution)
@@ -145,23 +175,51 @@ def fetch_range(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_
         
         data_frames.append(df)
     
-    data_frames = pd.concat(data_frames, ignore_index=True) if data_frames else pd.DataFrame(columns=["timestamp", "value"])
-    data_frames["signal"] = signal_name.name
-    data_frames["unit"] = unit
+    if not data_frames:
+        return pd.DataFrame(columns=["timestamp", "value", "signal", "unit"])
+
+    df = pd.concat(data_frames, ignore_index=True)
+    df["signal"] = signal_name.name
+    df["unit"] = unit.value
 
     # Filter the final DataFrame to ensure it only contains data within the specified date range
-    result = data_frames[(data_frames["timestamp"] >= pd.Timestamp(start_date).tz_convert("UTC")) & (data_frames["timestamp"] <= pd.Timestamp(end_date).tz_convert("UTC"))]
-    return result.sort_values("timestamp").reset_index(drop=True)
+    start_mask = df["timestamp"] >= pd.Timestamp(start_date).tz_convert("UTC")
+    end_mask = df["timestamp"] <= pd.Timestamp(end_date).tz_convert("UTC")
+    filtered_df = df[start_mask & end_mask]
+
+    return filtered_df
+
+def fetch_range(start_date: datetime, end_date: datetime):
+    """ Fetches time series data for all the 23 smard signals inside the time range from the SMARD API.
+    param: start_date: The start date of the desired date range (inclusive).
+    param: end_date: The end date of the desired date range (inclusive).
+
+    return: A pandas DataFrame containing the time series data for the signals, date range. 
+            The DataFrame has columns "timestamp" (as a timezone-aware datetime in UTC), 
+                                        "value" (as a numeric value), 
+                                        "signal" (the name of the signal), 
+                                        "unit" (the unit of the values).
+    """
+
+    data_frames = []
+    for signal, signal_config in SMARD_SIGNALS.items():
+        try:
+            region = signal_config["region"]
+            unit = signal_config["unit"]
+            df = _fetch_range_single_signal(signal, start_date, end_date, region, unit, RESOLUTION.HOUR)
+            data_frames.append(df)
+        except Exception as e:
+            logger.error(f"Failed to fetch signal {signal}: {e}")
+
+    df = pd.concat(data_frames, ignore_index=True) if data_frames else pd.DataFrame(columns=["timestamp", "value", "signal", "unit"])
+    
+    return df.sort_values("timestamp").reset_index(drop=True)
 
 if __name__ == "__main__":
     start_date = datetime.now(timezone.utc) - timedelta(days=7)
     end_date = datetime.now(timezone.utc)
     
-    df = fetch_range(ENERGY_SOURCE.WIND_ONSHORE, start_date, end_date, Resolution.HOUR)
+    df = fetch_range(start_date, end_date)
     print(df.head())
     print(len(df))
     print(df["value"].isna().sum())
-
-    df2 = fetch_range(NEIGHBORING_REGION.FRANCE, start_date, end_date, Resolution.HOUR)
-    print(df2.head())
-    print(df2["unit"].unique())
