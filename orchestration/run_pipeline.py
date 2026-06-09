@@ -1,0 +1,73 @@
+"""
+This is the orchestration entry point. It wires the three modules together to fetch SMARD data, fetch weather data, and upload both to S3 for a given date range.
+The main function is `run_pipeline`, which takes a start date and end date as input, fetches the relevant data, and uploads it to S3.
+
+It needs to support two modes of operation:
+1. A "full backfill" mode, where the user can specify a start date and end date in the past, and the pipeline will fetch all relevant data for that date range and upload it to S3.
+2. A "daily update" mode, where the user can specify a start date of yesterday and an end date of today, and the pipeline will fetch only the data for the last 24 hours and upload it to S3.
+
+Incremental: fetches yesterday's data only.
+"""
+
+import argparse
+from datetime import datetime, timedelta, timezone
+import logging
+from dotenv import load_dotenv
+
+from ingestion.s3_uploader import upload_to_s3, DATA_NAMES
+from ingestion.smard_client import fetch_range
+from ingestion.weather_client import fetch_weather
+
+load_dotenv()  # Load environment variables from .env file
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def parser():
+    arg_parser = argparse.ArgumentParser(description="Run the data pipeline to fetch SMARD and weather data and upload to S3.")
+    arg_parser.add_argument("--mode", choices=["full_backfill", "daily_update"], required=True, help="The mode of operation for the pipeline.")
+    arg_parser.add_argument("--start_date", type=str, help="The start date for the full backfill mode in YYYY-MM-DD format. Required if mode is full_backfill.")
+    arg_parser.add_argument("--end_date", type=str, help="The end date for the full backfill mode in YYYY-MM-DD format. Required if mode is full_backfill.")
+    return arg_parser.parse_args()
+
+
+def _run_pipeline_single_day(start_date: datetime, end_date: datetime):
+    # Fetch SMARD data for the given date
+    smard_data = fetch_range(start_date=start_date, end_date=end_date)
+    logger.info(f"SMARD Data fetch operation is successfull with {len(smard_data)} rows.")
+
+    # Fetch weather data for the given date
+    weather_data = fetch_weather(start_date, end_date)
+    logger.info(f"Weather Data fetch operation is successfull with {len(weather_data)} rows.")
+
+    # Upload combined data to S3
+    upload_to_s3(smard_data, DATA_NAMES.SMARD)
+    logger.info("SMARD data is upload to S3.")
+
+    upload_to_s3(weather_data, DATA_NAMES.WEATHER)
+    logger.info("Weather data is upload to S3.")
+
+def run_pipeline(start_date: datetime, end_date: datetime):
+    # For each day you fetch all 23 SMARD signals, combine into one long DataFrame, fetch weather, combine everything, then upload to S3.
+    current_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    while current_day <= end_date:
+        day_end = current_day.replace(hour=23, minute=59, second=59)
+        try:
+            _run_pipeline_single_day(current_day, day_end)
+            logger.info(f"Pipeline completed for date: {start_date.strftime('%Y-%m-%d')}")
+        except Exception as e:
+            logger.error(f"Data for {current_day.strftime('%Y-%m-%d')} cannot fetched: {e}")
+        current_day += timedelta(days=1)
+
+if __name__ == "__main__":
+    args = parser()
+    if args.mode == "full_backfill":
+        if not args.start_date or not args.end_date:
+            raise ValueError("Start date and end date must be provided for full backfill mode.")
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    elif args.mode == "daily_update":
+        start_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = datetime.now(timezone.utc)
+    
+    run_pipeline(start_date=start_date, end_date=end_date)
