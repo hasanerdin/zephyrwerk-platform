@@ -5,12 +5,11 @@ import pandas as pd
 import pytest
 from moto import mock_aws
 
-from ingestion.s3_uploader import get_file_name, upload_to_s3
+from ingestion.s3_uploader import get_file_name, upload_to_s3, DATA_NAMES
 
 BUCKET = "zephyrwerk-test-bucket"
 REGION = "eu-central-1"
 TEST_DATE = "2024-01-15"
-EXPECTED_KEY = "raw/smard/year=2024/month=01/smard_2024_01_15.parquet"
 
 
 @pytest.fixture
@@ -44,22 +43,33 @@ def sample_df():
         "unit": ["MW"] * 4,
     })
 
-
+def get_expected_key(data_name: DATA_NAMES):
+    year, month, day = TEST_DATE.split("-")
+    return f"raw/{data_name.value}/year={year}/month={month}/{data_name.value}_{year}_{month}_{day}.parquet"
+    
 def test_file_lands_at_correct_key(fake_s3, sample_df):
-    upload_to_s3(sample_df)
+    upload_to_s3(sample_df, data_name=DATA_NAMES.SMARD)
 
-    response = fake_s3.list_objects_v2(Bucket=BUCKET, Prefix="raw/smard/")
+    response = fake_s3.list_objects_v2(Bucket=BUCKET, Prefix=f"raw/{DATA_NAMES.SMARD.value}/")
     keys = [obj["Key"] for obj in response.get("Contents", [])]
 
-    assert EXPECTED_KEY in keys, f"Expected key {EXPECTED_KEY!r} not found; got {keys}"
+    expected_key = get_expected_key(DATA_NAMES.SMARD)
+    assert expected_key in keys, f"Expected key {get_expected_key(data_name='smard')!r} not found; got {keys}"
 
 
 def test_uploaded_parquet_content_is_valid(fake_s3, sample_df):
-    upload_to_s3(sample_df)
+    upload_to_s3(sample_df, data_name=DATA_NAMES.SMARD)
 
-    obj = fake_s3.get_object(Bucket=BUCKET, Key=EXPECTED_KEY)
+    expected_key = get_expected_key(DATA_NAMES.SMARD)
+    obj = fake_s3.get_object(Bucket=BUCKET, Key=expected_key)
     result_df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
 
     assert list(result_df.columns) == ["timestamp", "value", "signal", "unit"]
     assert len(result_df) == len(sample_df)
     assert result_df["value"].tolist() == sample_df["value"].tolist()
+
+def test_get_file_name():
+    expected_key = get_expected_key(DATA_NAMES.WEATHER)
+    file_name = get_file_name(DATA_NAMES.WEATHER, 2024, 1, 15)
+    assert file_name == expected_key, f"Expected file name {expected_key!r}, got {file_name!r}"
+
