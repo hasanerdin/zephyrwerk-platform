@@ -10,6 +10,7 @@ to ensure reliable data retrieval for various weather-related applications.
 """
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 BASE_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 BASE_HISTORICAL_URL = "https://archive-api.open-meteo.com/v1/archive"
+MAX_TIME_OUT = 30 # s
 
 class SignalType(Enum):
     WIND_SPEED = "wind_speed_100m"
@@ -68,7 +70,7 @@ def _fetch_single_region_weather(region: Region, start_date: datetime, end_date:
     }
     
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=MAX_TIME_OUT)
         response.raise_for_status()
 
         data = response.json()
@@ -85,6 +87,27 @@ def _fetch_single_region_weather(region: Region, start_date: datetime, end_date:
         logger.error(f"Error fetching weather data for {region.value}: {e}")
         return pd.DataFrame()
 
+def _fetch_single_region_weather_with_retry(region: Region, 
+                                             start_date: datetime, 
+                                             end_date: datetime, 
+                                             url: str,
+                                             max_retries=3) -> list:
+    for attempt in range(max_retries):
+        try:
+            return _fetch_single_region_weather(region, start_date, end_date, url)
+        except requests.HTTPError as e:
+            if e.response.status_code == 429: # rate limited
+                wait = 2 ** attempt * 5 # 5s, 10s, 20s
+                logger.warning(f"Rate limited. Waiting {wait}s before retry {attempt + 1}")
+                time.sleep(wait)
+            elif e.response.status_code >= 500:  # server error — retry
+                wait = 2 ** attempt
+                logger.warning(f"Server error {e.response.status_code}. Retrying in {wait}s")
+                time.sleep(wait)
+            else:
+                raise  # 4xx client errors — don't retry, raise immediately
+        raise Exception(f"Max retries exceeded for url {url}")
+
 def fetch_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
     Fetch weather data from the Open-Meteo API for the specified parameters.
@@ -100,17 +123,17 @@ def fetch_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     results = []
     for region in Region:
         if end_date < cutoff:
-            df = _fetch_single_region_weather(region, start_date, end_date, BASE_HISTORICAL_URL)
+            df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_HISTORICAL_URL)
         elif start_date >= cutoff:
-            df = _fetch_single_region_weather(region, start_date, end_date, BASE_FORECAST_URL)
+            df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_FORECAST_URL)
         else:
             # If the date range spans both historical and forecast data, we need to fetch separately for each part
             historical_end = cutoff - timedelta(seconds=1)  # End just before the cutoff
             forecast_start = cutoff  # Start at the cutoff
 
-            historical_df = _fetch_single_region_weather(region, start_date, historical_end, BASE_HISTORICAL_URL)
-            forecast_df = _fetch_single_region_weather(region, forecast_start, end_date, BASE_FORECAST_URL)
-            df = pd.concat([historical_df, forecast_df])
+            hist_df = _fetch_single_region_weather_with_retry(region, start_date, historical_end, BASE_HISTORICAL_URL)
+            forecast_df = _fetch_single_region_weather_with_retry(region, forecast_start, end_date, BASE_FORECAST_URL)
+            df = pd.concat([hist_df, forecast_df])
 
         if not df.empty:
             results.append(df)

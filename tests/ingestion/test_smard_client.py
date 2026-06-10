@@ -6,6 +6,7 @@ import requests
 
 from ingestion.smard_client import (
     ENERGY_SOURCE,
+    MAX_TIME_OUT,
     REGION,
     RESOLUTION,
     SMARD_SIGNALS,
@@ -54,7 +55,8 @@ class TestGetIndex:
             mock_get.return_value = _mock_response({"timestamps": []})
             _get_index(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR)
         mock_get.assert_called_once_with(
-            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE.value}/index_{RESOLUTION.HOUR.value}.json"
+            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE.value}/index_{RESOLUTION.HOUR.value}.json",
+            timeout=MAX_TIME_OUT
         )
 
     def test_quarter_hour_resolution_in_url(self):
@@ -62,7 +64,8 @@ class TestGetIndex:
             mock_get.return_value = _mock_response({"timestamps": []})
             _get_index(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE_LU, RESOLUTION.QUARTER_HOUR)
         mock_get.assert_called_once_with(
-            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE_LU.value}/index_{RESOLUTION.QUARTER_HOUR.value}.json"
+            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE_LU.value}/index_{RESOLUTION.QUARTER_HOUR.value}.json",
+            timeout=MAX_TIME_OUT
         )
 
 
@@ -95,7 +98,8 @@ class TestGetSeries:
             mock_get.return_value = _mock_response({"series": []})
             _get_series(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR, self.CHUNK_TS)
         mock_get.assert_called_once_with(
-            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE.value}/{ENERGY_SOURCE.WIND_ONSHORE.value}_{REGION.DE.value}_{RESOLUTION.HOUR.value}_{self.CHUNK_TS}.json"
+            f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE.value}/{ENERGY_SOURCE.WIND_ONSHORE.value}_{REGION.DE.value}_{RESOLUTION.HOUR.value}_{self.CHUNK_TS}.json",
+            timeout=MAX_TIME_OUT
         )
 
 
