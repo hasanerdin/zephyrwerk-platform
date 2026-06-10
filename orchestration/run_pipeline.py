@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from ingestion.s3_uploader import DATA_NAMES, upload_to_s3, is_already_uploaded
+from ingestion.s3_uploader import DATA_NAMES, is_already_uploaded, upload_to_s3
 from ingestion.smard_client import fetch_range
 from ingestion.weather_client import fetch_weather
 
