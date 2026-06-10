@@ -1,16 +1,20 @@
 """
 Open-Meteo API client for fetching weather data.
 
-This module provides utilities to retrieve current weather, forecasts, and historical weather data for specified locations using the Open-Meteo API.
-It supports multiple endpoints and returns data as pandas DataFrames for easy analysis and integration with other data sources. 
-The client handles API requests, response parsing, and error handling to ensure reliable data retrieval for various weather-related applications.
+This module provides utilities to retrieve current weather, forecasts, 
+and historical weather data for specified locations using the Open-Meteo API.
+It supports multiple endpoints and returns data as pandas DataFrames 
+for easy analysis and integration with other data sources. 
+The client handles API requests, response parsing, and error handling 
+to ensure reliable data retrieval for various weather-related applications.
 """
 
 import logging
-import requests
-import pandas as pd
-from enum import Enum
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+
+import pandas as pd
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,8 @@ def _fetch_single_region_weather(region: Region, start_date: datetime, end_date:
         end_date (datetime): The end date and time for the data retrieval.
         url (str): The API endpoint URL to use for the request.
     Returns:
-        pd.DataFrame: A DataFrame containing the requested weather data for the specified region with timestamps as the index.
+        pd.DataFrame: A DataFrame containing the requested weather data 
+                    for the specified region with timestamps as the index.
     """
     coordinates = REGION_COORDINATES[region]
     

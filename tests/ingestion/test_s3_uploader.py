@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from moto import mock_aws
 
-from ingestion.s3_uploader import get_file_name, upload_to_s3, DATA_NAMES
+from ingestion.s3_uploader import DATA_NAMES, get_file_name, upload_to_s3
 
 BUCKET = "zephyrwerk-test-bucket"
 REGION = "eu-central-1"
