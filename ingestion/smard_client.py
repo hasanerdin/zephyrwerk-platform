@@ -8,6 +8,7 @@ as pandas DataFrames.
 """
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Union
@@ -18,6 +19,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.smard.de/app/chart_data"
+MAX_TIME_OUT = 30 # s
  
 class RESOLUTION(Enum):
     HOUR = "hour"
@@ -107,7 +109,7 @@ def _get_index(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REG
     for the specified filter_id and region.
     """
     url = f"{BASE_URL}/{filter_id.value}/{region.value}/index_{resolution.value}.json"
-    response = requests.get(url)
+    response = requests.get(url, timeout=MAX_TIME_OUT)
     response.raise_for_status()
     return response.json().get("timestamps", [])
 
@@ -131,9 +133,30 @@ def _get_series(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_RE
     file_name = f"{filter_id.value}_{region.value}_{resolution.value}_{timestamp}.json"
     url = f"{BASE_URL}/{filter_id.value}/{region.value}/{file_name}"
     logger.debug("Fetching data from URL: %s", url)
-    response = requests.get(url)
+    response = requests.get(url, timeout=MAX_TIME_OUT)
     response.raise_for_status()
     return response.json().get("series", [])
+
+def _get_series_with_retry(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
+                region: REGION, 
+                resolution: RESOLUTION, 
+                timestamp: int,
+                max_retries=3) -> list:
+    for attempt in range(max_retries):
+        try:
+            return _get_series(filter_id, region, resolution, timestamp)
+        except requests.HTTPError as e:
+            if e.response.status_code == 429: # rate limited
+                wait = 2 ** attempt * 5 # 5s, 10s, 20s
+                logger.warning(f"Rate limited. Waiting {wait}s before retry {attempt + 1}")
+                time.sleep(wait)
+            elif e.response.status_code >= 500:  # server error — retry
+                wait = 2 ** attempt
+                logger.warning(f"Server error {e.response.status_code}. Retrying in {wait}s")
+                time.sleep(wait)
+            else:
+                raise  # 4xx client errors — don't retry, raise immediately
+        raise Exception(f"Max retries exceeded for timestamp {timestamp}")
 
 def _fetch_range_single_signal(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
                 start_date: datetime, 
@@ -178,7 +201,7 @@ def _fetch_range_single_signal(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYP
     # Fetch the series data for each relevant timestamp and aggregate into a DataFrame
     data_frames = []
     for ts in relevant_timestamps:
-        series = _get_series(filter_id, region, resolution, ts)
+        series = _get_series_with_retry(filter_id, region, resolution, ts)
         if not series:
             continue  # Skip if no data is returned for this timestamp
 

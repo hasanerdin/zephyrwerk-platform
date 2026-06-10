@@ -7,6 +7,9 @@ __pycache__/
 dist/
 build/
 
+# Log
+pipeline.log
+
 # Virtual environments / uv
 .venv/
 venv/
