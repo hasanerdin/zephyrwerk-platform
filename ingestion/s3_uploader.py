@@ -13,6 +13,20 @@ class DATA_NAMES(Enum):
     SMARD = "smard"
     WEATHER = "weather"
 
+def is_already_uploaded(data_name: DATA_NAMES, year: int, month: int, day: int) -> bool:
+    """Check if a Parquet file already exists in S3 for the given date."""
+    BUCKET_NAME = os.environ.get("ZEPHYRWERK_AWS_BUCKET_NAME")
+    AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL") or None
+    
+    key = get_file_name(data_name, year, month, day)
+    s3 = boto3.client('s3', endpoint_url=AWS_ENDPOINT_URL)
+    
+    try:
+        s3.head_object(Bucket=BUCKET_NAME, Key=key)
+        return True
+    except Exception:
+        return False
+
 def get_file_name(data_name: DATA_NAMES, year: int, month: int, day: int) -> str:
     """Generates a file name for the Parquet file based on the given year, month, and day. 
     The file name follows the format: "smard_{year}_{month}_{day}.parquet" and is stored 
