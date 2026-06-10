@@ -6,6 +6,7 @@ import requests
 
 from ingestion.smard_client import (
     ENERGY_SOURCE,
+    MAX_TIME_OUT,
     REGION,
     RESOLUTION,
     SMARD_SIGNALS,
@@ -13,7 +14,6 @@ from ingestion.smard_client import (
     _get_index,
     _get_series,
     fetch_range,
-    MAX_TIME_OUT
 )
 
 
