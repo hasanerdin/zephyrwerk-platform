@@ -308,6 +308,133 @@ models:
       - name: temperature_2m_bawue
         description: "Air temperature at 2 m above ground in °C for solar_region_bawue."
 
+  - name: fct_weather_forecast_features
+    description: "Pivoted fact table of hourly forecasted weather signals at 100 m hub height and surface level,
+                  sourced from stg_weather_forecast, joined with calendar features from dim_date so the table
+                  is directly usable for future-dated ML inference. Deduplicated to the most recently fetched
+                  forecast (max fetched_at) per timestamp/region/signal. One row per timestamp, one column per
+                  signal-region combination."
+
+    columns:
+      - name: timestamp
+        description: "Start of the hourly interval (UTC). Primary key."
+        tests:
+          - not_null
+          - unique
+
+      - name: wind_speed_100m_brandenburg
+        description: "Forecasted wind speed at 100 m hub height in m/s for wind_region_brandenburg."
+
+      - name: wind_direction_100m_brandenburg
+        description: "Forecasted wind direction at 100 m hub height in degrees (0-360) for wind_region_brandenburg."
+
+      - name: shortwave_radiation_brandenburg
+        description: "Forecasted downward shortwave solar radiation in W/m² for wind_region_brandenburg."
+
+      - name: cloud_cover_brandenburg
+        description: "Forecasted total cloud cover as a percentage (0-100) for wind_region_brandenburg."
+
+      - name: temperature_2m_brandenburg
+        description: "Forecasted air temperature at 2 m above ground in °C for wind_region_brandenburg."
+
+      - name: wind_speed_100m_schleswig
+        description: "Forecasted wind speed at 100 m hub height in m/s for wind_region_schleswig."
+
+      - name: wind_direction_100m_schleswig
+        description: "Forecasted wind direction at 100 m hub height in degrees (0-360) for wind_region_schleswig."
+
+      - name: shortwave_radiation_schleswig
+        description: "Forecasted downward shortwave solar radiation in W/m² for wind_region_schleswig."
+
+      - name: cloud_cover_schleswig
+        description: "Forecasted total cloud cover as a percentage (0-100) for wind_region_schleswig."
+
+      - name: temperature_2m_schleswig
+        description: "Forecasted air temperature at 2 m above ground in °C for wind_region_schleswig."
+
+      - name: wind_speed_100m_bavaria
+        description: "Forecasted wind speed at 100 m hub height in m/s for solar_region_bavaria."
+
+      - name: wind_direction_100m_bavaria
+        description: "Forecasted wind direction at 100 m hub height in degrees (0-360) for solar_region_bavaria."
+
+      - name: shortwave_radiation_bavaria
+        description: "Forecasted downward shortwave solar radiation in W/m² for solar_region_bavaria."
+
+      - name: cloud_cover_bavaria
+        description: "Forecasted total cloud cover as a percentage (0-100) for solar_region_bavaria."
+
+      - name: temperature_2m_bavaria
+        description: "Forecasted air temperature at 2 m above ground in °C for solar_region_bavaria."
+
+      - name: wind_speed_100m_bawue
+        description: "Forecasted wind speed at 100 m hub height in m/s for solar_region_bawue."
+
+      - name: wind_direction_100m_bawue
+        description: "Forecasted wind direction at 100 m hub height in degrees (0-360) for solar_region_bawue."
+
+      - name: shortwave_radiation_bawue
+        description: "Forecasted downward shortwave solar radiation in W/m² for solar_region_bawue."
+
+      - name: cloud_cover_bawue
+        description: "Forecasted total cloud cover as a percentage (0-100) for solar_region_bawue."
+
+      - name: temperature_2m_bawue
+        description: "Forecasted air temperature at 2 m above ground in °C for solar_region_bawue."
+
+      - name: date_day
+        description: "Calendar date of the interval. Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: year
+        description: "Calendar year. Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: quarter
+        description: "Calendar quarter (1-4). Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: month
+        description: "Calendar month (1-12). Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: week_of_year
+        description: "ISO week number (1-53). Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: day_of_week
+        description: "Day of week (0=Monday, 6=Sunday). Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: is_weekend
+        description: "True if Saturday or Sunday. Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: season
+        description: "Meteorological season. Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: is_german_public_holiday
+        description: "True if nationwide German public holiday. Sourced from dim_date."
+        tests:
+          - not_null
+
+      - name: holiday_name
+        description: "German name of the public holiday, null on non-holiday days. Sourced from dim_date."
+
+      - name: is_workday
+        description: "True if not a weekend and not a German public holiday. Sourced from dim_date."
+        tests:
+          - not_null
+
   - name: fct_ml_features
     description: "Wide feature table for ML model training and inference. Joins generation, market price, price spread,
                   and weather fact tables on timestamp. One row per timestamp."

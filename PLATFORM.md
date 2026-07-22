@@ -385,11 +385,12 @@ s3://zephyrwerk-data-lake/
 │       └── ...
 ├── models/
 │   ├── price_forecast/
-│   │   ├── latest/price_forecast.pkl
-│   │   └── archive/price_forecast_20260101.pkl
-│   └── generation_forecast/
-│       ├── latest/generation_forecast.pkl
-│       └── archive/generation_forecast_20260101.pkl
+│   │   ├── latest/{price_forecast.joblib, metadata.json}
+│   │   └── archive/{YYYYMMDD-HHMMSS}/{price_forecast.joblib, metadata.json}
+│   ├── wind_forecast/
+│   │   └── (same shape)
+│   └── solar_forecast/
+│       └── (same shape)
 └── dbt-artifacts/
     └── (dbt run artifacts for lineage tracking)
 ```
@@ -402,6 +403,10 @@ smard_generation
 smard_prices
 smard_neighbour_prices
 weather
+weather_forecast   -- forecast-horizon weather, separate from `weather`
+                   -- (real observed data only); keyed on
+                   -- (timestamp, region, signal_type, fetched_at) since
+                   -- the same future hour gets re-forecast daily
 -- Note: raw schema is reloadable from S3 at any time if corrupted or schema changes
 
 -- Schema: staging (dbt staging models — read from raw, write here)
@@ -416,7 +421,13 @@ fct_market_prices
 fct_price_spreads
 fct_weather_features
 fct_ml_features
-dim_date   -- populated via dbt seed (CSV) or generated with a date-spine macro, NOT from source data; includes German public holidays + season labels
+dim_date   -- populated via dbt seed (CSV) or generated with a date-spine macro, NOT from source data; 
+          -- includes German public holidays + season labels
+fct_weather_forecast_features   -- pivoted forecast weather + calendar
+                                  -- columns, joined at inference time only
+                                  -- — deliberately NEVER joined into
+                                  -- fct_ml_features, so training data stays
+                                  -- 100% real observed values
 ```
 
 ---
@@ -457,8 +468,8 @@ dim_date   -- populated via dbt seed (CSV) or generated with a date-spine macro,
 **Business goal:** Predict next-day wind + solar output (MW) to inform grid supply planning.
 
 **Target variables:**
-- `wind_generation_mw` (onshore + offshore combined)
-- `solar_generation_mw`
+- `wind_total_mw` (onshore + offshore combined)
+- `solar_mw`
 
 **Features:**
 | Feature | Source |
@@ -514,16 +525,24 @@ GET  /energy/prices
      → Historical day-ahead prices
 
 GET  /energy/summary
-     ?date=YYYY-MM-DD
+     ?target_date=YYYY-MM-DD
      → Daily summary: generation mix, avg price, renewable share
 
 POST /predict/price
-     body: { "target_date": "YYYY-MM-DD", "weather_features": {...} }
-     → Predicted day-ahead price for target date
+     body: { "target_date": "YYYY-MM-DD", "hour": 0-23 (optional) }
+     → Predicted day-ahead price, hourly (24 values for the day, or one
+       value if `hour` is given). `target_date` must be today or
+       tomorrow — the API only supports day-ahead forecasting, matching
+       what the models were trained and evaluated for. All weather/lag
+       features are assembled server-side from fct_ml_features (history)
+       + fct_weather_forecast_features (forecast) — the caller never
+       supplies feature values directly. target_date ∈ {today, tomorrow}
 
 POST /predict/generation
-     body: { "target_date": "YYYY-MM-DD", "weather_forecast": {...} }
-     → Predicted wind + solar generation for target date
+     body: { "target_date": "YYYY-MM-DD", "hour": 0-23 (optional) }
+     → Predicted wind + solar generation, hourly (24 values each source),
+       same target_date constraint and server-side feature assembly as
+       above. target_date ∈ {today, tomorrow}
 ```
 
 ---

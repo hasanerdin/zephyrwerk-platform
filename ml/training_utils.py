@@ -8,7 +8,6 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from ml.evaluate import baseline_persistence, directional_accuracy, full_evaluation_report
-from ml.features.feature_engineering import GenerationModelFeatureEngineer, PriceModelFeatureEngineer
 
 
 class ModelType(Enum):
@@ -18,6 +17,10 @@ class ModelType(Enum):
 
 
 def filter_raw_data(X_raw, y_raw, mode: ModelType):
+    # Imported here, not at module scope: feature_engineering imports ModelType
+    # from this module, so a top-level import back would be circular.
+    from ml.features.feature_engineering import GenerationModelFeatureEngineer, PriceModelFeatureEngineer
+
     # Run the transformer ONCE to identify NaN rows, then drop from raw indices
     if mode == ModelType.PRICE:
         feature_engineer = PriceModelFeatureEngineer()

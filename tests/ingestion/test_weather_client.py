@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -11,7 +11,8 @@ from ingestion.weather_client import (
     Region,
     SignalType,
     _fetch_single_region_weather,
-    fetch_weather,
+    fetch_forecast_weather,
+    fetch_historical_weather,
 )
 
 
@@ -127,21 +128,22 @@ class TestFetchSingleRegionWeather:
         expected_signals = {s.value for s in SignalType}
         assert requested_signals == expected_signals
 
-    def test_returns_empty_dataframe_on_http_error(self):
+    def test_raises_http_error_on_server_error(self):
+        # _fetch_single_region_weather no longer swallows errors itself — it must
+        # let them propagate so _fetch_single_region_weather_with_retry can retry.
         with patch("ingestion.weather_client.requests.get") as mock_get:
             mock_get.return_value = _mock_response({}, status_code=500)
-            df = _fetch_single_region_weather(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
+            with pytest.raises(requests.HTTPError):
+                _fetch_single_region_weather(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
 
-    def test_returns_empty_dataframe_on_connection_error(self):
+    def test_raises_connection_error(self):
         with patch("ingestion.weather_client.requests.get") as mock_get:
             mock_get.side_effect = requests.exceptions.ConnectionError("timeout")
-            df = _fetch_single_region_weather(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
-        assert df.empty
+            with pytest.raises(requests.exceptions.ConnectionError):
+                _fetch_single_region_weather(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
 
 
-# ── fetch_weather ─────────────────────────────────────────────────────────────
+# ── fetch_historical_weather / fetch_forecast_weather ──────────────────────────
 
 def _single_region_df(region: Region) -> pd.DataFrame:
     return pd.DataFrame({
@@ -160,54 +162,24 @@ def mock_fetch_single():
         yield mock
 
 
-class TestFetchWeather:
+class TestFetchHistoricalWeather:
     def test_returns_data_for_all_regions(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) - timedelta(days=8)
-        df = fetch_weather(start, end)
+        df = fetch_historical_weather(START, END)
         assert set(df["region"].unique()) == {r.value for r in Region}
 
-    def test_historical_url_used_when_entirely_in_past(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) - timedelta(days=8)
-        fetch_weather(start, end)
+    def test_uses_historical_url(self, mock_fetch_single):
+        fetch_historical_weather(START, END)
         for call in mock_fetch_single.call_args_list:
             assert call.args[3] == BASE_HISTORICAL_URL
 
-    def test_forecast_url_used_when_entirely_in_future(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) + timedelta(days=1)
-        end = datetime.now(timezone.utc) + timedelta(days=3)
-        fetch_weather(start, end)
-        for call in mock_fetch_single.call_args_list:
-            assert call.args[3] == BASE_FORECAST_URL
-
-    def test_split_fetch_when_range_spans_cutoff(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) + timedelta(days=2)
-        fetch_weather(start, end)
-        urls_used = {call.args[3] for call in mock_fetch_single.call_args_list}
-        assert BASE_HISTORICAL_URL in urls_used
-        assert BASE_FORECAST_URL in urls_used
-
-    def test_call_count_for_split_range(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) + timedelta(days=2)
-        fetch_weather(start, end)
-        # Each of the 4 regions gets 2 calls (historical + forecast)
-        assert mock_fetch_single.call_count == len(list(Region)) * 2
-
-    def test_call_count_for_pure_historical(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) - timedelta(days=8)
-        fetch_weather(start, end)
+    def test_call_count(self, mock_fetch_single):
+        fetch_historical_weather(START, END)
         assert mock_fetch_single.call_count == len(list(Region))
 
     def test_returns_empty_dataframe_when_all_regions_fail(self):
         with patch("ingestion.weather_client._fetch_single_region_weather") as mock:
             mock.return_value = pd.DataFrame()
-            start = datetime.now(timezone.utc) - timedelta(days=10)
-            end = datetime.now(timezone.utc) - timedelta(days=8)
-            df = fetch_weather(start, end)
+            df = fetch_historical_weather(START, END)
         assert isinstance(df, pd.DataFrame)
         assert df.empty
 
@@ -220,16 +192,48 @@ class TestFetchWeather:
             return _single_region_df(region)
 
         with patch("ingestion.weather_client._fetch_single_region_weather", side_effect=side_effect):
-            start = datetime.now(timezone.utc) - timedelta(days=10)
-            end = datetime.now(timezone.utc) - timedelta(days=8)
-            df = fetch_weather(start, end)
+            df = fetch_historical_weather(START, END)
 
         returned_regions = set(df["region"].unique())
         assert regions[0].value not in returned_regions
         assert len(returned_regions) == len(regions) - 1
 
     def test_result_contains_expected_columns(self, mock_fetch_single):
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-        end = datetime.now(timezone.utc) - timedelta(days=8)
-        df = fetch_weather(start, end)
+        df = fetch_historical_weather(START, END)
         assert set(df.columns) >= {"timestamp", "region", "signal_type", "value", "unit"}
+
+    def test_does_not_add_fetched_at_column(self, mock_fetch_single):
+        df = fetch_historical_weather(START, END)
+        assert "fetched_at" not in df.columns
+
+
+class TestFetchForecastWeather:
+    def test_returns_data_for_all_regions(self, mock_fetch_single):
+        df = fetch_forecast_weather(START, END)
+        assert set(df["region"].unique()) == {r.value for r in Region}
+
+    def test_uses_forecast_url(self, mock_fetch_single):
+        fetch_forecast_weather(START, END)
+        for call in mock_fetch_single.call_args_list:
+            assert call.args[3] == BASE_FORECAST_URL
+
+    def test_returns_empty_dataframe_when_all_regions_fail(self):
+        with patch("ingestion.weather_client._fetch_single_region_weather") as mock:
+            mock.return_value = pd.DataFrame()
+            df = fetch_forecast_weather(START, END)
+        assert isinstance(df, pd.DataFrame)
+        assert df.empty
+
+    def test_adds_fetched_at_column(self, mock_fetch_single):
+        # raw.weather_forecast's unique key includes fetched_at, and the loader
+        # hard-requires the column — every non-empty forecast fetch must stamp it.
+        df = fetch_forecast_weather(START, END)
+        assert "fetched_at" in df.columns
+        assert df["fetched_at"].notna().all()
+
+    def test_fetched_at_is_utc_and_within_call_window(self, mock_fetch_single):
+        before = datetime.now(timezone.utc)
+        df = fetch_forecast_weather(START, END)
+        after = datetime.now(timezone.utc)
+        assert (df["fetched_at"] >= before).all()
+        assert (df["fetched_at"] <= after).all()

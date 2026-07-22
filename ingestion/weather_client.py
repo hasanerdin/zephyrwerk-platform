@@ -69,23 +69,20 @@ def _fetch_single_region_weather(region: Region, start_date: datetime, end_date:
         "utc_offset_seconds": 0
     }
     
-    try:
-        response = requests.get(url, params=params, timeout=MAX_TIME_OUT)
-        response.raise_for_status()
+    response = requests.get(url, params=params, timeout=MAX_TIME_OUT)
+    response.raise_for_status()
 
-        data = response.json()
+    data = response.json()
 
-        # Convert the data to a DataFrame as (timestap, region, signal_type, value, unit)
-        df = pd.DataFrame(data["hourly"])
-        df["timestamp"] = pd.to_datetime(df["time"], utc=True)
-        df = df.drop(columns=["time"])
-        df = df.melt(id_vars=["timestamp"], var_name="signal_type", value_name="value")
-        df["region"] = region.value 
-        df["unit"] = df["signal_type"].map(data["hourly_units"])
-        return df[["timestamp", "region", "signal_type", "value", "unit"]]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching weather data for {region.value}: {e}")
-        return pd.DataFrame()
+    # Convert the data to a DataFrame as (timestap, region, signal_type, value, unit)
+    df = pd.DataFrame(data["hourly"])
+    df["timestamp"] = pd.to_datetime(df["time"], utc=True)
+    df = df.drop(columns=["time"])
+    df = df.melt(id_vars=["timestamp"], var_name="signal_type", value_name="value")
+    df["region"] = region.value 
+    df["unit"] = df["signal_type"].map(data["hourly_units"])
+    return df[["timestamp", "region", "signal_type", "value", "unit"]]
+    
 
 def _fetch_single_region_weather_with_retry(region: Region, 
                                              start_date: datetime, 
@@ -108,7 +105,7 @@ def _fetch_single_region_weather_with_retry(region: Region,
                 raise  # 4xx client errors — don't retry, raise immediately
         raise Exception(f"Max retries exceeded for url {url}")
 
-def fetch_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+def fetch_historical_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
     Fetch weather data from the Open-Meteo API for the specified parameters.
 
@@ -118,32 +115,39 @@ def fetch_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     Returns:
         pd.DataFrame: A DataFrame containing the requested weather data with timestamps as the index.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=5)
-
     results = []
     for region in Region:
-        if end_date < cutoff:
-            df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_HISTORICAL_URL)
-        elif start_date >= cutoff:
-            df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_FORECAST_URL)
-        else:
-            # If the date range spans both historical and forecast data, we need to fetch separately for each part
-            historical_end = cutoff - timedelta(seconds=1)  # End just before the cutoff
-            forecast_start = cutoff  # Start at the cutoff
-
-            hist_df = _fetch_single_region_weather_with_retry(region, start_date, historical_end, BASE_HISTORICAL_URL)
-            forecast_df = _fetch_single_region_weather_with_retry(region, forecast_start, end_date, BASE_FORECAST_URL)
-            df = pd.concat([hist_df, forecast_df])
-
+        df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_HISTORICAL_URL)
+    
         if not df.empty:
             results.append(df)
+
+    return pd.concat(results) if results else pd.DataFrame()
+
+def fetch_forecast_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """
+    Fetch weather data from the Open-Meteo API for the specified parameters.
+
+    Args:
+        start_date (datetime): The start date and time for the data retrieval.
+        end_date (datetime): The end date and time for the data retrieval.
+    Returns:
+        pd.DataFrame: A DataFrame containing the requested weather data with timestamps as the index.
+    """
+    results = []
+    for region in Region:
+        df = _fetch_single_region_weather_with_retry(region, start_date, end_date, BASE_FORECAST_URL)
         
-    return pd.concat(results) if results else pd.DataFrame()            
+        if not df.empty:
+            df["fetched_at"] = datetime.now(timezone.utc)
+            results.append(df)
+
+    return pd.concat(results) if results else pd.DataFrame()
 
 if __name__ == "__main__":
     start = datetime.now(timezone.utc) - timedelta(days=10)
     end = datetime.now(timezone.utc)
-    df = fetch_weather(start, end)
+    df = fetch_historical_weather(start, end)
     print(df.head(10))
     print(f"Total rows: {len(df)}")
     print(f"Regions: {df['region'].unique()}")

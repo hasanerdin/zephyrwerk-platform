@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from db.database import SessionLocal
+from db.database import engine
 
 
 def get_db() -> Generator:
@@ -10,8 +10,5 @@ def get_db() -> Generator:
     Yields:
         Generator: A generator that yields a database session.
     """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with engine.connect() as conn:
+        yield conn

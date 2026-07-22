@@ -16,7 +16,15 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ml.training_utils import ModelType
+
 # ---- Column constants ----
+
+TARGET_COLUMNS = {
+    ModelType.PRICE: "price_eur_mwh",
+    ModelType.WIND: "wind_total_mw",
+    ModelType.SOLAR: "solar_mw",
+}
 
 # 14 current-hour generation/consumption signals — all leak against every target.
 LEAKING_GEN_COLS = [
@@ -198,8 +206,9 @@ class GenerationModelFeatureEngineer(BaseEstimator, TransformerMixin):
 
 # ---- Utilities ----
 
-def split_x_y(df: pd.DataFrame, target: str) -> tuple[pd.DataFrame, pd.Series]:
+def split_x_y(df: pd.DataFrame, model_type: ModelType) -> tuple[pd.DataFrame, pd.Series]:
     """Separate target column from features."""
+    target = TARGET_COLUMNS[model_type]
     if target not in df.columns:
         raise KeyError(f"target column '{target}' not found in DataFrame")
     return df.drop(columns=[target]), df[target].copy()
@@ -227,29 +236,29 @@ def temporal_split(X: pd.DataFrame, y: pd.Series, holdout_days: int = 90):
 # ---- Smoke test ----
 
 if __name__ == "__main__":
-    from ml.data_access import load_features
+    from ml.data_access import load_ml_features
 
-    sample = load_features(start_date="2023-04-16", end_date="2023-04-30")
+    sample = load_ml_features(start_date="2023-04-16", end_date="2023-04-30")
     sample["wind_total_mw"] = sample["wind_onshore_mw"] + sample["wind_offshore_mw"]
 
     # Price model
-    X_price_raw, y_price = split_x_y(sample, "price_eur_mwh")
+    X_price_raw, y_price = split_x_y(sample, ModelType.PRICE)
     price_features = PriceModelFeatureEngineer().transform(X_price_raw)
 
     print("=== Price model ===")
     print("Shape:", price_features.shape)
-    print("Target absent from features:", "price_eur_mwh" not in price_features.columns)
+    print("Target absent from features:", ModelType.PRICE.value not in price_features.columns)
     print("Feature columns:")
     for c in sorted(price_features.columns.tolist()):
         print(f"  {c}")
 
     # Wind generation model
-    X_wind_raw, y_wind = split_x_y(sample, "wind_total_mw")
+    X_wind_raw, y_wind = split_x_y(sample, ModelType.WIND)
     wind_features = GenerationModelFeatureEngineer().transform(X_wind_raw)
 
     print("\n=== Wind generation model ===")
     print("Shape:", wind_features.shape)
-    print("Target absent from features:", "wind_total_mw" not in wind_features.columns)
+    print("Target absent from features:", ModelType.WIND.value not in wind_features.columns)
     print("No price columns leaked:", not any("price" in c for c in wind_features.columns))
     print("Feature columns:")
     for c in sorted(wind_features.columns.tolist()):

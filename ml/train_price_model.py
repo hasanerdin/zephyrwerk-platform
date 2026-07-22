@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.pipeline import Pipeline
 
-from ml.data_access import load_features
+from ml.data_access import load_ml_features
 from ml.features.feature_engineering import PriceModelFeatureEngineer, split_x_y, temporal_split
 from ml.s3_model_io import save_pipeline
 from ml.training_utils import (
@@ -29,7 +29,7 @@ def start_price_model_training(raw):
     """
     report = {"model": "price_forecast", "trained_at": datetime.now(timezone.utc).isoformat()}
 
-    X_raw, y_raw = split_x_y(raw, target="price_eur_mwh")
+    X_raw, y_raw = split_x_y(raw, ModelType.PRICE)
 
     X_raw, y = filter_raw_data(X_raw, y_raw, ModelType.PRICE)
 
@@ -74,9 +74,9 @@ def start_price_model_training(raw):
     save_report(report, mode=ModelType.PRICE)
     draw_predictions(y_pred, y_test, mode=ModelType.PRICE)
 
-    s3_uri = save_pipeline(pipeline, model_name="price_forecast", metadata=report)
+    s3_uri = save_pipeline(pipeline, model_type=ModelType.PRICE, metadata=report)
     logger.info(f"Model saved to {s3_uri}")
 
 if __name__ == "__main__":
-    raw = load_features(start_date="2023-04-09")   # 7-day buffer before 2023-04-16 for lags
+    raw = load_ml_features(start_date="2023-04-09")   # 7-day buffer before 2023-04-16 for lags
     start_price_model_training(raw)

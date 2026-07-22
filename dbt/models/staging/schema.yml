@@ -7,6 +7,7 @@ sources:
       - name: smard_prices
       - name: smard_neighbour_prices
       - name: weather
+      - name: weather_forecast
 
 models:
   - name: stg_smard_generation
@@ -165,3 +166,54 @@ models:
           - accepted_values:
               arguments:
                 values: ["%","°","°C","km/h","W/m²"]
+
+  - name: stg_weather_forecast
+    description: "Cleaned weather forecast information for 4 renewable energy regions."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - timestamp
+              - region
+              - signal_name
+              - fetched_at
+
+    columns:
+      - name: timestamp
+        description: "UTC timestamp of the hourly observation."
+        tests:
+          - not_null
+
+      - name: region
+        description: "Name of the region from which weather data was collected."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["wind_region_brandenburg","wind_region_schleswig","solar_region_bavaria","solar_region_bawue"]
+
+      - name: signal_name
+        description: "Name of the weather signal e.g. 'wind_speed_100m', 'temperature_2m'."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["wind_speed_100m","wind_direction_100m","shortwave_radiation","cloud_cover","temperature_2m"]
+
+      - name: value
+        description: "Weather measurement (wind speed, direction, temperature, etc.). Can be negative."
+        tests:
+          - not_null
+
+      - name: unit
+        description: "Unit of the weather measurement."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["%","°","°C","km/h","W/m²"]
+
+      - name: fetched_at
+        description: "UTC timestamp of the fetched operation"
+        tests:
+          - not_null

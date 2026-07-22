@@ -128,10 +128,10 @@ def _load_smard_day(conn, fs, date: datetime) -> None:
             try:
                 execute_values(cur, insert_sql, rows)
                 conn.commit()
-                logger.info("Inserted %d SMARD rows for %s", len(rows), date.date())
+                logger.info(f"Inserted {len(rows)} SMARD rows for {date.date()}")
             except Exception:
                 conn.rollback()
-                logger.exception("Failed to insert SMARD rows for %s", date.date())
+                logger.exception(f"Failed to insert SMARD rows for {date.date()}")
 
 def _load_weather_day(conn, fs, date: datetime) -> None:
     df = _get_dataframe(fs, DATA_NAMES.WEATHER, date)
@@ -151,29 +151,60 @@ def _load_weather_day(conn, fs, date: datetime) -> None:
         try:
             execute_values(cur, insert_sql, rows)
             conn.commit()
-            logger.info("Inserted %d WEATHER rows for %s", len(rows), date.date())
+            logger.info(f"Inserted {len(rows)} WEATHER rows for {date.date()}")
         except Exception:
             conn.rollback()
-            logger.exception("Failed to insert WEATHER rows for %s", date.date())
+            logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
 
-def load_range(start_date: datetime, end_date: datetime) -> None:
+def _load_weather_forecast_day(conn, fs, date: datetime) -> None:
+    df = _get_dataframe(fs, DATA_NAMES.WEATHER_FORECAST, date)
+    if df is None or df.empty:
+        return
+    
+    cols = ["timestamp", "region", "signal_type", "value", "unit", "fetched_at"]
+    rows = list(
+        df[["timestamp", "region", "signal_type", "value", "unit", "fetched_at"]].itertuples(index=False, name=None)
+        )
+    
+    insert_sql = (
+        f"INSERT INTO raw.weather_forecast ({','.join(cols)}) VALUES %s\
+            ON CONFLICT (timestamp, region, signal_type, fetched_at) \
+            DO UPDATE SET value = EXCLUDED.value, unit = EXCLUDED.unit"
+    )
+
+    with conn.cursor() as cur:
+        try:
+            execute_values(cur, insert_sql, rows)
+            conn.commit()
+            logger.info(f"Inserted {len(rows)} WEATHER FORECAST rows for {date.date()}.")
+        except Exception:
+            conn.rollback()
+            logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
+
+def load_from_s3_to_db(date: datetime) -> None:
     fs = _get_filesystem()
     conn = _get_db_connection()
 
+    try:
+        _load_smard_day(conn, fs, date)
+        _load_weather_day(conn, fs, date)
+        _load_weather_forecast_day(conn, fs, date)
+        logger.info(f"Pipeline completed for date: {date.strftime('%Y-%m-%d')}")
+    finally:
+        conn.close()
+
+
+def load_range(start_date: datetime, end_date: datetime) -> None:
     if start_date.tzinfo is None:
         start_date = start_date.replace(tzinfo=timezone.utc)
     if end_date.tzinfo is None:
         end_date = end_date.replace(tzinfo=timezone.utc)
 
-    try:
-        current_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        while current_day <= end_date:
-            _load_smard_day(conn, fs, current_day)
-            _load_weather_day(conn, fs, current_day)
-            logger.info(f"Pipeline completed for date: {current_day.strftime('%Y-%m-%d')}")
-            current_day += timedelta(days=1)
-    finally:
-        conn.close()
+    current_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    while current_day <= end_date:
+        load_from_s3_to_db(current_day)
+        current_day += timedelta(days=1)
+    
 
 if __name__ == "__main__":
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)

@@ -6,10 +6,12 @@ import pytest
 from moto import mock_aws
 
 import ml.s3_model_io as s3_model_io
+from ml.training_utils import ModelType
 
 BUCKET = "zephyrwerk-test-models-bucket"
 REGION = "eu-central-1"
-MODEL_NAME = "price-model"
+MODEL_TYPE = ModelType.PRICE
+MODEL_NAME = f"{MODEL_TYPE.value}_forecast"
 
 
 @pytest.fixture
@@ -41,7 +43,7 @@ def fake_pipeline():
 
 
 def test_save_pipeline_writes_latest_and_archive_copies(fake_s3, fake_pipeline):
-    uri = s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME, metadata={"r2": 0.9})
+    uri = s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE, metadata={"r2": 0.9})
 
     assert uri.startswith(f"s3://{BUCKET}/models/{MODEL_NAME}/archive/")
     assert uri.endswith(f"{MODEL_NAME}.joblib")
@@ -58,7 +60,7 @@ def test_save_pipeline_writes_latest_and_archive_copies(fake_s3, fake_pipeline):
 
 
 def test_save_pipeline_writes_metadata_content(fake_s3, fake_pipeline):
-    s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME, metadata={"r2": 0.9})
+    s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE, metadata={"r2": 0.9})
 
     obj = fake_s3.get_object(Bucket=BUCKET, Key=f"models/{MODEL_NAME}/latest/metadata.json")
     assert json.loads(obj["Body"].read()) == {"r2": 0.9}
@@ -66,7 +68,7 @@ def test_save_pipeline_writes_metadata_content(fake_s3, fake_pipeline):
 
 def test_save_pipeline_without_metadata_defaults_to_empty_dict_and_warns(fake_s3, fake_pipeline, caplog):
     with caplog.at_level(logging.WARNING):
-        s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME)
+        s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE)
 
     assert "without metadata" in caplog.text
 
@@ -75,29 +77,31 @@ def test_save_pipeline_without_metadata_defaults_to_empty_dict_and_warns(fake_s3
 
 
 def test_save_then_load_pipeline_latest_round_trips(fake_s3, fake_pipeline):
-    s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME, metadata={"r2": 0.9})
+    s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE, metadata={"r2": 0.9})
 
-    loaded = s3_model_io.load_pipeline(MODEL_NAME)
+    loaded, metadata = s3_model_io.load_pipeline(MODEL_TYPE)
 
     assert loaded == fake_pipeline
+    assert metadata == {"r2": 0.9}
 
 
 def test_save_then_load_pipeline_specific_archive_version(fake_s3, fake_pipeline):
-    s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME, metadata={"r2": 0.9})
+    s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE, metadata={"r2": 0.9})
 
     prefix = f"models/{MODEL_NAME}/archive/"
     keys = [obj["Key"] for obj in fake_s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)["Contents"]]
     model_key = next(key for key in keys if key.endswith(".joblib"))
     version = model_key[len(prefix):].split("/")[0]
 
-    loaded = s3_model_io.load_pipeline(MODEL_NAME, version=version)
+    loaded, metadata = s3_model_io.load_pipeline(MODEL_TYPE, version=version)
 
     assert loaded == fake_pipeline
+    assert metadata == {"r2": 0.9}
 
 
 def test_load_pipeline_rejects_malformed_version(fake_s3):
     with pytest.raises(ValueError, match="version must be 'latest'"):
-        s3_model_io.load_pipeline(MODEL_NAME, version="not-a-valid-version")
+        s3_model_io.load_pipeline(MODEL_TYPE, version="not-a-valid-version")
 
 
 def test_load_pipeline_missing_key_raises(fake_s3):
@@ -109,4 +113,4 @@ def test_save_pipeline_raises_without_bucket_env_var(monkeypatch, fake_pipeline)
     monkeypatch.delenv("ZEPHYRWERK_AWS_BUCKET_NAME", raising=False)
 
     with pytest.raises(ValueError, match="ZEPHYRWERK_AWS_BUCKET_NAME"):
-        s3_model_io.save_pipeline(fake_pipeline, MODEL_NAME)
+        s3_model_io.save_pipeline(fake_pipeline, MODEL_TYPE)

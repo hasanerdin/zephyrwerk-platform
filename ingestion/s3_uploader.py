@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class DATA_NAMES(Enum):
     SMARD = "smard"
     WEATHER = "weather"
+    WEATHER_FORECAST = "weather_forecast"
 
 def is_already_uploaded(data_name: DATA_NAMES, year: int, month: int, day: int) -> bool:
     """Check if a Parquet file already exists in S3 for the given date."""
@@ -57,6 +58,9 @@ def upload_to_s3(dataframe: pd.DataFrame, data_name: DATA_NAMES):
         raise ValueError("ZEPHYRWERK_AWS_BUCKET_NAME environment variable is not set.")
 
     AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL") or None
+    
+    if dataframe.empty:
+        raise ValueError(f"There is not any data to write s3 with data name {data_name.value}.")
     
     date = dataframe["timestamp"].iloc[0]
     year, month, day = date.year, date.month, date.day

@@ -1,23 +1,36 @@
+WITH nan_to_null AS(
+    SELECT
+        timestamp::TIMESTAMP WITH TIME ZONE,
+        signal AS signal_name,
+        NULLIF(value, 'NaN')::numeric AS value,
+        unit
+    FROM
+        {{ source('raw', 'smard_generation') }}
+)
+-- Non-pumped-storage generation signals
 SELECT
-    timestamp :: TIMESTAMP WITH TIME ZONE,
-    signal AS signal_name,
-    COALESCE(value, 0) AS value,
-    unit
-FROM
-    {{ source('raw', 'smard_generation') }}
-WHERE
-    signal = 'NUCLEAR'
-    AND timestamp <= '{{ var("nuclear_retirement_date") }}'::TIMESTAMP WITH TIME ZONE
-    AND (value >= 0 OR value IS NULL)
+    *
+FROM nan_to_null
+WHERE signal_name NOT IN ('NUCLEAR', 'PUMPED_STORAGE')
+AND value IS NOT NULL
+AND value >= 0
 
 UNION ALL
 
+-- Nuclear — retired April 2023
 SELECT
-    timestamp :: TIMESTAMP WITH TIME ZONE,
-    signal AS signal_name,
-    value,
-    unit
-FROM
-    {{ source('raw', 'smard_generation') }}
-WHERE
-    signal != 'NUCLEAR' AND value >= 0
+    *
+FROM nan_to_null
+WHERE signal_name = 'NUCLEAR'
+AND timestamp <= '{{ var("nuclear_retirement_date") }}'::TIMESTAMP WITH TIME ZONE
+AND value IS NOT NULL
+AND value >= 0
+
+UNION ALL
+
+-- Pumped storage — can be negative (consumption mode)
+SELECT
+    *
+FROM nan_to_null
+WHERE signal_name = 'PUMPED_STORAGE'
+AND value IS NOT NULL

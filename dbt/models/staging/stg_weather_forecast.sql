@@ -3,6 +3,7 @@ SELECT
     region,
     signal_type AS signal_name,
     NULLIF(value, 'NaN') AS value,
-    unit
+    unit,
+    fetched_at :: TIMESTAMP WITH TIME ZONE
 FROM
-    {{ source('raw', 'weather') }}
+    {{ source('raw', 'weather_forecast') }}
