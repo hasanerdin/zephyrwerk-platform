@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from api.routers.energy import router as energy_router
 from api.routers.health import router as health_router
+from api.routers.performance import router as performance_router
 from api.routers.predict import router as predict_router
 from api.services.model_loader import lifespan as model_lifespan
 
@@ -28,3 +29,4 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(predict_router)
 app.include_router(energy_router)
 app.include_router(health_router)
+app.include_router(performance_router)

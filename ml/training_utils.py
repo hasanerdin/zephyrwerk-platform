@@ -7,7 +7,7 @@ from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
-from ml.evaluate import baseline_persistence, directional_accuracy, full_evaluation_report
+from ml.evaluate import baseline_persistence, full_evaluation_report
 
 
 class ModelType(Enum):
@@ -113,9 +113,7 @@ def test_model(y_pred, y_test, test_baseline_pred, mode: ModelType):
         include_directional=True, include_peak=False,
     )
     baseline_report = baseline_persistence(test_baseline_pred, y_test)
-    if mode == ModelType.PRICE:
-        holdout_report["directional_accuracy"] = directional_accuracy(y_test, test_baseline_pred)
-
+    
     return holdout_report, baseline_report
 
 def draw_predictions(y_pred, y_test, mode: ModelType):

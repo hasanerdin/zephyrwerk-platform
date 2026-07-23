@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from ml.energy_sources import GENERATION_SOURCE_COLUMNS
+from ml.energy_sources import GENERATION_SOURCE_COLUMNS, NEIGHBOUR_SOURCES
 
 
 def _add_date_range_filter(params: dict[str, Any], start_date: date | None, end_date: date | None) -> str:
@@ -18,9 +18,11 @@ def _add_date_range_filter(params: dict[str, Any], start_date: date | None, end_
     return "".join(f" AND {clause}" for clause in clauses)
 
 
-def query_generation_sources(
-    db: Connection, start_date: date | None, end_date: date | None, source: str | None
-) -> list[dict[str, Any]]:
+def query_generation_sources(db: Connection, 
+                             start_date: date | None, 
+                             end_date: date | None, 
+                             source: str | None
+                            ) -> list[dict[str, Any]]:
     if source and source not in GENERATION_SOURCE_COLUMNS:
         raise ValueError(f"Unknown generation source '{source}'. Valid sources: {sorted(GENERATION_SOURCE_COLUMNS)}")
 
@@ -44,6 +46,34 @@ def query_day_ahead_prices(db: Connection, start_date: date | None, end_date: da
 
     result = db.execute(text(query), params).fetchall()
     return [dict(row._mapping) for row in result]
+
+
+def query_neighbour_prices(db: Connection, 
+                           start_date: date | None, 
+                           end_date: date | None,
+                           source: str | None
+                        ) -> list[dict[str, Any]]: 
+    columns: list[str] = []
+    if source:
+        if source not in NEIGHBOUR_SOURCES:
+            raise ValueError(f"Unknown neighbour source '{source}'. Valid sources: {sorted(NEIGHBOUR_SOURCES)}")
+        else:
+            columns.append(f"{source.lower()}_price_eur_mwh")
+            columns.append(f"{source.lower()}_spread_eur_mwh")
+    else:
+        for neighbour in NEIGHBOUR_SOURCES:
+            columns.append(f"{neighbour.lower()}_price_eur_mwh")
+            columns.append(f"{neighbour.lower()}_spread_eur_mwh")
+    
+    columns_query = ", ".join(columns)
+    query = f"SELECT timestamp, {columns_query} FROM analytics.fct_price_spread WHERE 1=1"
+
+    params: dict[str, Any] = {}
+    query += _add_date_range_filter(params, start_date, end_date)
+    query += " ORDER BY timestamp DESC"
+
+    result = db.execute(text(query), params)
+    return [dict(row._mapping) for row in result.fetchall()]
 
 
 def query_generation_mix(db: Connection, target_date: date) -> dict[str, float]:

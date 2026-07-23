@@ -7,6 +7,8 @@ from api.schemas.responses import (
     EnergyGeneration,
     EnergyGenerationResponse,
     EnergySummaryResponse,
+    NeighbourPrice,
+    NeighbourPriceResponse,
 )
 
 # get_energy_summary / get_generated_energy / get_day_ahead_prices are imported
@@ -177,3 +179,87 @@ class TestEnergyPrices:
             {"timestamp": "2024-01-01T00:00:00Z", "price": 45.6},
             {"timestamp": "2024-01-01T01:00:00Z", "price": 47.1},
         ]
+
+
+class TestEnergyPriceSpreads:
+    def test_mounted_at_energy_price_spreads(self, client, monkeypatch):
+        # Regression guard: the router handler and the service function it
+        # calls were previously both named `get_neighbour_prices`, so the
+        # handler recursed into itself instead of calling the service layer.
+        fake_response = NeighbourPriceResponse(start_date=None, end_date=None, source=None, neighbour_prices=[])
+        monkeypatch.setattr(
+            energy_router, "get_neighbour_prices", lambda db, start_date, end_date, source: fake_response
+        )
+
+        response = client.get("/energy/price-spreads")
+
+        assert response.status_code == 200
+
+    def test_no_filters_returns_200(self, client, monkeypatch):
+        fake_response = NeighbourPriceResponse(start_date=None, end_date=None, source=None, neighbour_prices=[])
+        monkeypatch.setattr(
+            energy_router, "get_neighbour_prices", lambda db, start_date, end_date, source: fake_response
+        )
+
+        response = client.get("/energy/price-spreads")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["start_date"] is None
+        assert body["end_date"] is None
+
+    def test_start_and_end_date_only_are_passed_through(self, client, monkeypatch):
+        captured = {}
+
+        def _fake(db, start_date, end_date, source):
+            captured["start_date"] = start_date
+            captured["end_date"] = end_date
+            captured["source"] = source
+            return NeighbourPriceResponse(
+                start_date=start_date, end_date=end_date, source=source, neighbour_prices=[]
+            )
+
+        monkeypatch.setattr(energy_router, "get_neighbour_prices", _fake)
+
+        response = client.get("/energy/price-spreads?start_date=2024-01-01&end_date=2024-01-31")
+
+        assert response.status_code == 200
+        assert captured["start_date"] == date(2024, 1, 1)
+        assert captured["end_date"] == date(2024, 1, 31)
+        assert captured["source"] is None
+
+    def test_valid_source_returns_200_with_that_source_in_the_response(self, client, monkeypatch):
+        fake_response = NeighbourPriceResponse(
+            start_date=None,
+            end_date=None,
+            source="FRANCE",
+            neighbour_prices=[
+                NeighbourPrice(
+                    timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc), source="FRANCE", price=45.2, spread=3.1
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            energy_router, "get_neighbour_prices", lambda db, start_date, end_date, source: fake_response
+        )
+
+        response = client.get("/energy/price-spreads?source=FRANCE")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source"] == "FRANCE"
+        assert len(body["neighbour_prices"]) == 1
+
+    def test_invalid_source_returns_422_naming_the_source_not_500(self, client, monkeypatch):
+        # The repository raises ValueError for a source outside its allow-list;
+        # the router's try/except must convert that to a 422, not let it fall
+        # through to the generic Exception handler (which would be a 500).
+        def _raise(db, start_date, end_date, source):
+            raise ValueError(f"Unknown neighbour source '{source}'. Valid sources: [...]")
+
+        monkeypatch.setattr(energy_router, "get_neighbour_prices", _raise)
+
+        response = client.get("/energy/price-spreads?source=NOT_A_REAL_SOURCE")
+
+        assert response.status_code == 422
+        assert "NOT_A_REAL_SOURCE" in response.json()["detail"]
