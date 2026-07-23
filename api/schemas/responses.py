@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,36 @@ class DayAheadResponse(BaseModel):
     start_date: date | None
     end_date: date | None
     prices: list[DayAheadPrice]
+
+# MODEL GETs
+class HoldOutReport(BaseModel):
+    mae: float
+    rmse: float
+    r2: float
+    directional_accuracy: float | None = None
+    deviation_directional_accuracy: float | None = None
+    peak_mae: float | None = None
+
+class BaselinePersistenceReport(BaseModel):
+    mae: float
+    rmse: float
+    r2: float
+    directional_accuracy: float
+
+class ModelResponse(BaseModel):
+    model: str
+    trained_at: datetime
+    n_train: int
+    n_test: int
+    train_window: dict[str, str]
+    test_window: dict[str, str]
+    cv_mae_mean: float
+    cv_mae_std: float
+    cv_mae_per_fold: list[float]
+    hyperparameters: dict[str, Any]
+    n_features: int
+    holdout: HoldOutReport
+    baseline_persistence: BaselinePersistenceReport
 
 
 # HEALTH GET
