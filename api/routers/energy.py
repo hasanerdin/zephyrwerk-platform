@@ -5,16 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Connection
 
 from api.schemas.responses import (
-    DayAheadResponse, 
-    EnergyGenerationResponse, 
+    DayAheadResponse,
+    EnergyGenerationResponse,
     EnergySummaryResponse,
-    NeighbourPriceResponse
+    NeighbourPriceResponse,
 )
 from api.services.data_services import (
-    get_day_ahead_prices, 
-    get_energy_summary, 
-    get_generated_energy, 
-    get_neighbour_prices
+    get_day_ahead_prices,
+    get_energy_summary,
+    get_generated_energy,
+    get_neighbour_prices,
 )
 from db.deps import get_db
 
@@ -50,10 +50,10 @@ def get_day_ahead(db: Annotated[Connection, Depends(get_db)],
 
 @router.get("/price-spreads", response_model=NeighbourPriceResponse)
 def get_price_spreads(db: Annotated[Connection, Depends(get_db)],
-                        start_date: date | None = Query(default=None, description="Filter from this date (YYYY-MM-DD)"),
-                        end_date: date | None = Query(default=None, description="Filter up to this date (YYYY-MM-DD)"),
-                        source: str | None = Query(default=None,
-                                               description="Neighbour country code ('FRANCE', 'AUSTRIA', 'DENMARK_1' etc.)")
+                    start_date: date | None = Query(default=None, description="Filter from this date (YYYY-MM-DD)"),
+                    end_date: date | None = Query(default=None, description="Filter up to this date (YYYY-MM-DD)"),
+                    source: str | None = Query(default=None,
+                                        description="Neighbour country code ('FRANCE', 'AUSTRIA', 'DENMARK_1' etc.)")
                   ) -> NeighbourPriceResponse:
     try:
         return get_neighbour_prices(db, start_date, end_date, source)

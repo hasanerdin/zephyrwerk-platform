@@ -7,7 +7,7 @@ from api.repositories.energy_repository import (
     query_day_ahead_prices,
     query_generation_mix,
     query_generation_sources,
-    query_neighbour_prices
+    query_neighbour_prices,
 )
 from api.schemas.responses import (
     DayAheadPrice,
@@ -16,7 +16,7 @@ from api.schemas.responses import (
     EnergyGenerationResponse,
     EnergySummaryResponse,
     NeighbourPrice,
-    NeighbourPriceResponse
+    NeighbourPriceResponse,
 )
 from ml.energy_sources import NEIGHBOUR_SOURCES, RENEWABLE_SOURCE_COLUMNS
 
