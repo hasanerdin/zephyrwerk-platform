@@ -56,6 +56,19 @@ class EnergySummaryResponse(BaseModel):
 
 
 # PRICE GETs
+class NeighbourPrice(BaseModel):
+    timestamp: datetime
+    source: str
+    price: float | None
+    spread: float | None 
+
+class NeighbourPriceResponse(BaseModel):
+    start_date: date | None
+    end_date: date | None
+    source: str | None = None
+    neighbour_prices: list[NeighbourPrice]
+
+
 class DayAheadPrice(BaseModel):
     """A single day-ahead market price observation."""
     timestamp: datetime

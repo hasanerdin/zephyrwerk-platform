@@ -9,6 +9,16 @@ class SourceCategory(str, Enum):
     NUCLEAR = "nuclear"
     STORAGE = "storage"
 
+NEIGHBOUR_SOURCES = [
+"AUSTRIA",
+"FRANCE",
+"NETHERLANDS",
+"POLAND",
+"SWITZERLAND",
+"CZECHIA",
+"DENMARK_1",
+"DENMARK_2",
+]
 
 GENERATION_SOURCE_CATEGORIES: dict[str, SourceCategory] = {
     "wind_onshore_mw": SourceCategory.RENEWABLE,
