@@ -7,6 +7,7 @@ from api.repositories.energy_repository import (
     query_day_ahead_prices,
     query_generation_mix,
     query_generation_sources,
+    query_neighbour_prices,
 )
 from api.schemas.responses import (
     DayAheadPrice,
@@ -14,8 +15,10 @@ from api.schemas.responses import (
     EnergyGeneration,
     EnergyGenerationResponse,
     EnergySummaryResponse,
+    NeighbourPrice,
+    NeighbourPriceResponse,
 )
-from ml.energy_sources import RENEWABLE_SOURCE_COLUMNS
+from ml.energy_sources import NEIGHBOUR_SOURCES, RENEWABLE_SOURCE_COLUMNS
 
 
 def get_energy_summary(db: Connection, target_date: date) -> EnergySummaryResponse:
@@ -34,9 +37,11 @@ def get_energy_summary(db: Connection, target_date: date) -> EnergySummaryRespon
                          renewable_share=renewable_share)
 
 
-def get_generated_energy(
-    db: Connection, start_date: date | None, end_date: date | None, source: str | None
-) -> EnergyGenerationResponse:
+def get_generated_energy(db: Connection, 
+                         start_date: date | None, 
+                         end_date: date | None, 
+                         source: str | None
+                        ) -> EnergyGenerationResponse:
     energy_by_sources = query_generation_sources(db, start_date, end_date, source)
 
     results = [
@@ -63,3 +68,26 @@ def get_day_ahead_prices(db: Connection, start_date: date | None, end_date: date
                             end_date=end_date,
                             prices=results)
 
+
+def get_neighbour_prices(db: Connection,
+                         start_date: date | None,
+                         end_date: date | None,
+                         source: str | None
+                        ) -> NeighbourPriceResponse:
+    neighbour_prices_by_source = query_neighbour_prices(db, start_date, end_date, source)
+
+    neighbours = [source] if source else NEIGHBOUR_SOURCES
+
+    results = [
+        NeighbourPrice(timestamp=row["timestamp"],
+                       source=neighbour,
+                       price=row[f"{neighbour.lower()}_price_eur_mwh"],
+                       spread=row[f"{neighbour.lower()}_spread_eur_mwh"])
+        for row in neighbour_prices_by_source
+        for neighbour in neighbours
+    ]
+
+    return NeighbourPriceResponse(start_date=start_date,
+                                  end_date=end_date,
+                                  source=source,
+                                  neighbour_prices=results)
