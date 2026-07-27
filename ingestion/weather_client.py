@@ -103,7 +103,7 @@ def _fetch_single_region_weather_with_retry(region: Region,
                 time.sleep(wait)
             else:
                 raise  # 4xx client errors — don't retry, raise immediately
-        raise Exception(f"Max retries exceeded for url {url}")
+    raise Exception(f"Max retries exceeded for url {url}")
 
 def fetch_historical_weather(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
