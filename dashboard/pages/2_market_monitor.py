@@ -1,17 +1,28 @@
 """Page 2 — Market Monitor: today's snapshot + a fixed 30-day neighbour price
-spread window. Short-TTL page — data can be a few minutes stale, hence the
-visible "last updated" timestamp below."""
+spread window. Short-TTL page — data is cached (see dashboard.config ttls),
+hence the refresh-cadence caption below rather than a "last updated" clock:
+the underlying data can be stale by up to a cache TTL regardless of when the
+page last rendered."""
 
-from datetime import date, datetime, timedelta, timezone
+import logging
+from datetime import date, timedelta
 
 import streamlit as st
 
 from dashboard import api_client
 from dashboard.charts import price_spread_bar_chart
+from dashboard.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Market Monitor", layout="wide")
 st.title("Market Monitor")
-st.caption(f"Last updated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
+
+_settings = get_settings()
+st.caption(
+    f"Price forecast refreshes every {_settings.ttl_forecast // 60} min · "
+    f"neighbour price spreads refresh every {_settings.ttl_historical // 3600}h"
+)
 
 today = date.today()
 SPREAD_WINDOW_DAYS = 30
@@ -34,6 +45,7 @@ except api_client.APIConnectionError:
 except api_client.APIClientError as e:
     st.error(f"Today's price forecast unavailable: {e}")
 except Exception:
+    logger.exception("Unexpected error fetching today's price forecast")
     st.error("Today's price forecast unavailable — unexpected error.")
 
 st.metric("Today's avg. day-ahead price (forecast)",
@@ -53,4 +65,5 @@ except api_client.APIConnectionError:
 except api_client.APIClientError as e:
     st.error(f"Neighbour price spreads unavailable: {e}")
 except Exception:
+    logger.exception("Unexpected error fetching neighbour price spreads")
     st.error("Neighbour price spreads unavailable — unexpected error.")

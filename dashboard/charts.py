@@ -47,6 +47,15 @@ _SOURCE_LABELS = {
     _OTHER: "Other",
 }
 
+# Renewable subset of the full generation source list (mirrors
+# ml.energy_sources.RENEWABLE_SOURCE_COLUMNS). Duplicated here rather than
+# imported so the dashboard has no runtime dependency on the ml package — see
+# api_client.ModelType for the same policy applied to model-type names.
+RENEWABLE_SOURCES = [
+    "solar_mw", "wind_onshore_mw", "wind_offshore_mw", "biomass_mw",
+    "hydropower_mw", "other_renewable_mw",
+]
+
 
 def _with_opacity(hex_color: str, opacity: float) -> str:
     r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)

@@ -3,12 +3,15 @@ model performance. Five independent API calls, each with its own try/except —
 a 503 on one (e.g. wind generation) must not blank the rest of the page. This
 is the page most likely to hit "model/forecast not ready" states."""
 
+import logging
 from datetime import date, timedelta
 
 import streamlit as st
 
 from dashboard import api_client
 from dashboard.charts import forecast_band_chart
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Forecast Viewer", layout="wide")
 st.title("Forecast Viewer")
@@ -27,6 +30,7 @@ def _render_api_error(context: str, e: Exception) -> None:
     elif isinstance(e, api_client.APIClientError):
         st.error(f"{context}: {e}")
     else:
+        logger.exception(f"{context}: unexpected error", exc_info=e)
         st.error(f"{context}: unexpected error.")
 
 

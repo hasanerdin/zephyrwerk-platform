@@ -6,8 +6,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 from dashboard import api_client
-from dashboard.charts import generation_mix_area_chart, price_timeseries_chart
-from ml.energy_sources import RENEWABLE_SOURCE_COLUMNS
+from dashboard.charts import RENEWABLE_SOURCES, generation_mix_area_chart, price_timeseries_chart
 
 st.set_page_config(page_title="Historical Overview", layout="wide")
 st.title("Historical Overview")
@@ -53,7 +52,7 @@ else:
 if generation_df is not None and not generation_df.empty:
     totals_by_source = generation_df.groupby("source")["value"].sum()
     total = totals_by_source.sum()
-    renewable_total = totals_by_source[totals_by_source.index.isin(RENEWABLE_SOURCE_COLUMNS)].sum()
+    renewable_total = totals_by_source[totals_by_source.index.isin(RENEWABLE_SOURCES)].sum()
     renewable_share = (renewable_total / total * 100) if total else None
     kpi_col2.metric("Renewable share", f"{renewable_share:.1f}%" if renewable_share is not None else "no data")
 else:
