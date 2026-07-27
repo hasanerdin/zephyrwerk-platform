@@ -17,25 +17,27 @@ today = date.today()
 SPREAD_WINDOW_DAYS = 30
 window_start = today - timedelta(days=SPREAD_WINDOW_DAYS)
 
-# --- today's snapshot ---
-summary = None
+# --- today's snapshot: sourced from the price forecast, not /energy/summary.
+# Actuals can't exist for hours that haven't happened yet, and the daily
+# ingestion pipeline only backfills completed days — so "today" has to come
+# from predict_price, the same endpoint Page 3 uses (target_date is
+# constrained server-side to {today, tomorrow} for exactly this reason). ---
+avg_price = None
 try:
-    summary = api_client.get_today_summary(today)
+    price_forecast = api_client.predict_price(today)
+    values = [p["value"] for p in price_forecast["prices"]]
+    avg_price = sum(values) / len(values) if values else None
+except api_client.ServiceUnavailableError:
+    st.warning("Today's price forecast is temporarily unavailable.")
 except api_client.APIConnectionError:
-    st.error("Could not reach the API — today's summary unavailable.")
+    st.error("Could not reach the API — today's price forecast unavailable.")
 except api_client.APIClientError as e:
-    st.error(f"Today's summary unavailable: {e}")
+    st.error(f"Today's price forecast unavailable: {e}")
 except Exception:
-    st.error("Today's summary unavailable — unexpected error.")
+    st.error("Today's price forecast unavailable — unexpected error.")
 
-kpi_col1, kpi_col2 = st.columns(2)
-avg_price = summary.get("avg_price") if summary else None
-kpi_col1.metric("Today's avg. day-ahead price",
-                f"{avg_price:.1f} EUR/MWh" if avg_price is not None else "no data yet")
-
-renewable_share = summary.get("renewable_share") if summary else None
-kpi_col2.metric("Today's renewable share",
-                f"{renewable_share:.1f}%" if renewable_share is not None else "no data yet")
+st.metric("Today's avg. day-ahead price (forecast)",
+         f"{avg_price:.1f} EUR/MWh" if avg_price is not None else "no data yet")
 
 # --- neighbour price spreads, fixed rolling window (no user-facing picker —
 # this page is a snapshot, not a historical-exploration surface; see Page 1
@@ -43,7 +45,7 @@ kpi_col2.metric("Today's renewable share",
 st.subheader(f"Neighbour price spreads (last {SPREAD_WINDOW_DAYS} days)")
 try:
     spreads_df = api_client.get_price_spreads(window_start, today)
-    st.plotly_chart(price_spread_bar_chart(spreads_df), use_container_width=True)
+    st.plotly_chart(price_spread_bar_chart(spreads_df), use_container_width=True, theme=None)
 except api_client.ServiceUnavailableError:
     st.warning("Neighbour price data is temporarily unavailable.")
 except api_client.APIConnectionError:

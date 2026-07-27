@@ -176,6 +176,31 @@ class TestGetInferenceData:
         assert elapsed_hour in features.index
         assert not np.isnan(features.loc[elapsed_hour, "price_eur_mwh"])
 
+    def test_forecast_fills_gap_left_by_ml_features_ingestion_lag(self, monkeypatch):
+        """
+        fct_ml_features ingestion can lag well behind `now` — the buffer
+        loader may only have real rows up through some earlier cutoff. The
+        forecast fetch must start right after that cutoff (not after `now`),
+        or the hours in between are missing from both sources even though
+        fct_weather_forecast_features already covers them.
+        """
+        now = TODAY + pd.Timedelta(hours=12)
+        ingestion_cutoff = TODAY - pd.Timedelta(hours=1)  # buffer is 13h behind `now`
+
+        def _lagging_ml_features(start, end):
+            idx = pd.date_range(start, min(end, ingestion_cutoff), freq="h", tz="UTC")
+            return pd.DataFrame({"price_eur_mwh": np.arange(len(idx), dtype=float)}, index=idx)
+
+        monkeypatch.setattr(prediction_service, "load_ml_features", _lagging_ml_features)
+        monkeypatch.setattr(prediction_service, "load_weather_forecast", _fake_load_weather_forecast)
+        _freeze_now(monkeypatch, now)
+
+        features = get_inference_data(target_date=TODAY.date())
+
+        gap_hour = TODAY + pd.Timedelta(hours=5)  # between ingestion_cutoff and now
+        assert gap_hour in features.index
+        assert not features.loc[gap_hour].isna().all()
+
     def test_raises_when_forecast_query_returns_no_rows_for_target_date(self, monkeypatch):
         """Daily pipeline hasn't run yet: the forecast loader returns nothing."""
 

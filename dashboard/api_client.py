@@ -105,20 +105,6 @@ def get_price_spreads(start_date: date | None = None, end_date: date | None = No
     return _to_dataframe(data["neighbour_prices"])
 
 
-def _fetch_summary(target_date: date) -> dict[str, Any]:
-    return _request("GET", "/energy/summary", params={"target_date": target_date.isoformat()})
-
-
-@st.cache_data(ttl=get_settings().ttl_historical)
-def get_summary_historical(target_date: date) -> dict[str, Any]:
-    return _fetch_summary(target_date)
-
-
-@st.cache_data(ttl=get_settings().ttl_today)
-def get_today_summary(target_date: date) -> dict[str, Any]:
-    return _fetch_summary(target_date)
-
-
 @st.cache_data(ttl=get_settings().ttl_forecast)
 def predict_price(target_date: date, hour: int | None = None) -> dict[str, Any]:
     return _request("POST", "/predict/price", json={"target_date": target_date.isoformat(), "hour": hour})

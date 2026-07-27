@@ -62,8 +62,8 @@ else:
 # --- charts ---
 st.subheader("Generation mix")
 if generation_df is not None:
-    st.plotly_chart(generation_mix_area_chart(generation_df), use_container_width=True)
+    st.plotly_chart(generation_mix_area_chart(generation_df), use_container_width=True, theme=None)
 
 st.subheader("Day-ahead price")
 if prices_df is not None:
-    st.plotly_chart(price_timeseries_chart(prices_df), use_container_width=True)
+    st.plotly_chart(price_timeseries_chart(prices_df), use_container_width=True, theme=None)

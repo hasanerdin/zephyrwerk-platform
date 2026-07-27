@@ -7,7 +7,6 @@ class DashboardSettings(BaseSettings):
     ZEPHYRWERK_DASHBOARD_API_URL: str
 
     ttl_historical: int = 60 * 60 * 6   # 6h — EDA/history data, changes at most daily
-    ttl_today: int = 60 * 5             # 5m — today's partial-day generation/summary
     ttl_forecast: int = 60 * 30         # 30m — until next model run
     ttl_model_metrics: int = 60 * 60 * 24  # 24h — only changes on retrain
 

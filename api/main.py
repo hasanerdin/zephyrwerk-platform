@@ -1,5 +1,6 @@
 import logging
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -8,6 +9,8 @@ from api.routers.health import router as health_router
 from api.routers.performance import router as performance_router
 from api.routers.predict import router as predict_router
 from api.services.model_loader import lifespan as model_lifespan
+
+load_dotenv()  # Load environment variables from .env file
 
 logger = logging.getLogger(__name__)
 
