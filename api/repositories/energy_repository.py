@@ -66,7 +66,7 @@ def query_neighbour_prices(db: Connection,
             columns.append(f"{neighbour.lower()}_spread_eur_mwh")
     
     columns_query = ", ".join(columns)
-    query = f"SELECT timestamp, {columns_query} FROM analytics.fct_price_spread WHERE 1=1"
+    query = f"SELECT timestamp, {columns_query} FROM analytics.fct_price_spreads WHERE 1=1"
 
     params: dict[str, Any] = {}
     query += _add_date_range_filter(params, start_date, end_date)

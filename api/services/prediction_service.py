@@ -49,14 +49,19 @@ def get_inference_data(target_date: date) -> pd.DataFrame:
     start_day = now - timedelta(days=7)
 
     target_start = datetime.combine(target_date, time.min, tzinfo=timezone.utc)
+    target_start = target_start.replace(hour=1, minute=0, second=0, microsecond=0)
     target_end = target_start + timedelta(hours=23)
 
-    # Buffer's end and the forecast's start are both inclusive bounds, so
-    # starting the forecast an hour later avoids double-counting `now` — a
-    # duplicate row there would throw off every positional shift()-based lag
-    # feature computed downstream.
     buffer_features = load_ml_features(start_day, now)
-    weather_forecast = load_weather_forecast(now + timedelta(hours=1), target_end)
+
+    # fct_ml_features ingestion lags behind real time, so the buffer's last
+    # real row can land well before `now` — anchoring the forecast fetch to
+    # `now` would then leave the hours in between uncovered by both sources,
+    # even though fct_weather_forecast_features already has them. Anchor to
+    # the buffer's actual last timestamp instead (still an hour later, since
+    # both ends are inclusive, to avoid double-counting that row).
+    buffer_end = buffer_features.index.max() if not buffer_features.empty else start_day
+    weather_forecast = load_weather_forecast(buffer_end + timedelta(hours=1), target_end)
 
     features = pd.concat([buffer_features, weather_forecast]).sort_index()
     features = features[~features.index.duplicated(keep="first")]

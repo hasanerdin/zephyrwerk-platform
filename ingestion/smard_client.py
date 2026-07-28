@@ -156,7 +156,7 @@ def _get_series_with_retry(filter_id: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEI
                 time.sleep(wait)
             else:
                 raise  # 4xx client errors — don't retry, raise immediately
-        raise Exception(f"Max retries exceeded for timestamp {timestamp}")
+    raise Exception(f"Max retries exceeded for timestamp {timestamp}")
 
 def _fetch_range_single_signal(signal_name: Union[ENERGY_SOURCE, CONSUMPTION_TYPE, NEIGHBORING_REGION], 
                 start_date: datetime, 

@@ -60,32 +60,63 @@ def parser():
                         )
     return arg_parser.parse_args()
 
-def run_smard_single_day(start_date: datetime, end_date: datetime):
-    smard_exists = is_already_uploaded(DATA_NAMES.SMARD, start_date.year, start_date.month, start_date.day)
-    if smard_exists:
-        logger.info(f"Skipping {start_date.date()} smard data — already uploaded")
-        return
-    
-    # Fetch SMARD data for the given date
-    smard_data = fetch_range(start_date=start_date, end_date=end_date)
-    logger.info(f"SMARD Data fetch operation is successfull with {len(smard_data)} rows.")
+def _missing_day_ranges(data_name: DATA_NAMES, start_date: datetime, end_date: datetime) -> list:
+    """Collapse the calendar days in [start_date.date(), end_date.date()] that are not
+    yet uploaded into contiguous (day_start, day_end) ranges, so each stretch can be
+    fetched from the upstream API with a single call instead of one call per day."""
+    missing_days = []
+    current_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    last_day = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    while current_day <= last_day:
+        if not is_already_uploaded(data_name, current_day.year, current_day.month, current_day.day):
+            missing_days.append(current_day)
+        current_day += timedelta(days=1)
 
-    # Upload combined data to S3
-    upload_to_s3(smard_data, DATA_NAMES.SMARD)
-    logger.info("SMARD data is uploaded to S3.")
+    ranges = []
+    for day in missing_days:
+        if ranges and day == ranges[-1][1] + timedelta(days=1):
+            ranges[-1] = (ranges[-1][0], day)
+        else:
+            ranges.append((day, day))
+    return ranges
 
-def run_weather_single_day(start_date: datetime, end_date: datetime):
-    weather_exists = is_already_uploaded(DATA_NAMES.WEATHER, start_date.year, start_date.month, start_date.day)
-    if weather_exists:
-        logger.info(f"Skipping {start_date.date()} weather data — already uploaded")
-        return
+def run_smard_range(start_date: datetime, end_date: datetime) -> None:
+    for range_start, range_end in _missing_day_ranges(DATA_NAMES.SMARD, start_date, end_date):
+        range_end_ts = range_end.replace(hour=23, minute=59, second=59)
+        try:
+            smard_data = fetch_range(start_date=range_start, end_date=range_end_ts)
+            if smard_data.empty:
+                logger.warning(f"No SMARD data returned for {range_start.date()} to {range_end.date()}")
+                continue
 
-    # Fetch weather data for the given date
-    weather_hist_data = fetch_historical_weather(start_date, end_date)
-    logger.info(f"Weather Data fetch operation is successfull with {len(weather_hist_data)} rows.")
+            logger.info(
+                f"SMARD Data fetch operation is successfull with {len(smard_data)} rows "
+                f"({range_start.date()} to {range_end.date()})."
+            )
+            for _, day_df in smard_data.groupby(smard_data["timestamp"].dt.date):
+                upload_to_s3(day_df, DATA_NAMES.SMARD)
+            logger.info(f"SMARD data is uploaded to S3 ({range_start.date()} to {range_end.date()}).")
+        except Exception as e:
+            logger.error(f"SMARD data for {range_start.date()} to {range_end.date()} cannot be fetched: {e}")
 
-    upload_to_s3(weather_hist_data, DATA_NAMES.WEATHER)
-    logger.info("Weather data is uploaded to S3.")
+def run_weather_range(start_date: datetime, end_date: datetime) -> None:
+    for range_start, range_end in _missing_day_ranges(DATA_NAMES.WEATHER, start_date, end_date):
+        range_end_ts = range_end.replace(hour=23, minute=59, second=59)
+        try:
+            weather_hist_data = fetch_historical_weather(range_start, range_end_ts)
+            if weather_hist_data.empty:
+                logger.warning(f"No weather data returned for {range_start.date()} to {range_end.date()}")
+                continue
+
+            logger.info(
+                f"Weather Data fetch operation is successfull with {len(weather_hist_data)} rows "
+                f"({range_start.date()} to {range_end.date()})."
+            )
+            for _, day_df in weather_hist_data.groupby(weather_hist_data["timestamp"].dt.date):
+                upload_to_s3(day_df, DATA_NAMES.WEATHER)
+            logger.info(f"Weather data is uploaded to S3 ({range_start.date()} to {range_end.date()}).")
+        except Exception as e:
+            logger.error(f"Weather data for {range_start.date()} to {range_end.date()} cannot be fetched: {e}")
 
 def run_weather_forecast(start_date: datetime, end_date:datetime):
     weather_forecast_data = fetch_forecast_weather(start_date, end_date)
@@ -111,23 +142,23 @@ def run_dbt(command: str) -> None:
 
 # Run once at the beginning
 def run_historical_pipeline(start_date: datetime, end_date: datetime):
-    # For each day you fetch all 23 SMARD signals, combine into one long DataFrame, 
-    # fetch weather, combine everything, then upload to S3.
+    # Fetch each of SMARD/weather once for the whole range (batched by contiguous
+    # missing-day stretches internally), rather than once per calendar day.
     yesterday = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(minutes=1)
     end_date = min(end_date, yesterday)
 
-    current_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    while current_day <= end_date:
-        day_end = current_day.replace(hour=23, minute=59, second=59)
+    try:
+        run_smard_range(start_date, end_date)
+    except Exception as e:
+        logger.error(f"SMARD data for {start_date.date()} to {end_date.date()} cannot be fetched: {e}")
 
-        try:
-            run_smard_single_day(current_day, day_end)
-            run_weather_single_day(current_day, day_end)
-            logger.info(f"Pipeline completed for date: {current_day.strftime('%Y-%m-%d')}")
-        except Exception as e:
-            logger.error(f"Data for {current_day.strftime('%Y-%m-%d')} cannot fetched: {e}")
-        current_day += timedelta(days=1)
+    try:
+        run_weather_range(start_date, end_date)
+    except Exception as e:
+        logger.error(f"Weather data for {start_date.date()} to {end_date.date()} cannot be fetched: {e}")
 
+    logger.info(f"Historical fetch completed for {start_date.date()} to {end_date.date()}")
+    
     # Load raw data from S3 into PostgreSQL
     load_range(start_date, end_date)
 
@@ -154,15 +185,14 @@ def run_model_training():
 def fetch_yesterday_data():
     yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     start_date = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_date = start_date + timedelta(days=1)
-    
+
     try:
-        run_smard_single_day(start_date, end_date)
+        run_smard_range(start_date, start_date)
     except Exception as e:
         logger.error(f"SMARD data for {yesterday.strftime('%Y-%m-%d')} cannot fetched: {e}")
 
     try:
-        run_weather_single_day(start_date, end_date)
+        run_weather_range(start_date, start_date)
     except Exception as e:
         logger.error(f"Weather data for {yesterday.strftime('%Y-%m-%d')} cannot fetched: {e}")
 
