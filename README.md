@@ -298,6 +298,24 @@ Then visit `http://127.0.0.1:8000/docs` for interactive OpenAPI docs, or
 check `http://127.0.0.1:8000/health` to confirm DB connectivity and that
 all three models loaded successfully from S3.
 
+### Run the dashboard
+
+```bash
+uv run streamlit run dashboard/app.py
+```
+
+Visit `http://localhost:8501`. Needs the API running (`ZEPHYRWERK_DASHBOARD_API_URL`, default `http://localhost:8000`) — see above.
+
+### Run API + dashboard with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Requires `.env` (see "Configure environment" above) — both services load it via `env_file`, so no credentials are duplicated into `docker-compose.yml` itself. Builds `api/Dockerfile` and `dashboard/Dockerfile` and runs both containers on one network — the dashboard reaches the API at `http://api:8000` (Compose's built-in service-name DNS), not `localhost`. API at `http://localhost:8000`, dashboard at `http://localhost:8501`.
+
+`docker-compose.yml` deliberately does **not** include Postgres or LocalStack — those stay the long-lived `make infra-up` containers (see above), reached from inside the `api` container via `host.docker.internal` rather than `localhost`, since `localhost` inside a container refers to the container itself. Run `make infra-up` first if they're not already up. `docker-compose.yml` overrides `ZEPHYRWERK_RDS_HOST` and `AWS_ENDPOINT_URL` on top of `.env` for this reason — `.env`'s `localhost` is correct for native processes, not containers.
+
 ### Run tests
 
 ```bash

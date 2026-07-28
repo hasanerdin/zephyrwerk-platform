@@ -48,7 +48,7 @@ try:
     hours = [p["hour"] for p in price_forecast["prices"]]
     values = [p["value"] for p in price_forecast["prices"]]
     st.plotly_chart(forecast_band_chart(hours, values, price_mae or 0.0, "EUR/MWh"),
-                    use_container_width=True, theme=None)
+                    width='stretch', theme=None)
     if price_mae is None:
         st.caption("Model performance unavailable — showing point forecast without an MAE band.")
 except Exception as e:
@@ -80,7 +80,7 @@ try:
         st.plotly_chart(
             forecast_band_chart([p["hour"] for p in solar], [p["value"] for p in solar],
                                 solar_mae or 0.0, "MW"),
-            use_container_width=True, theme=None,
+            width='stretch', theme=None,
         )
         if solar_mae is None:
             st.caption("Model performance unavailable — showing point forecast without an MAE band.")
@@ -89,7 +89,7 @@ try:
         st.plotly_chart(
             forecast_band_chart([p["hour"] for p in wind], [p["value"] for p in wind],
                                 wind_mae or 0.0, "MW"),
-            use_container_width=True, theme=None,
+            width='stretch', theme=None,
         )
         if wind_mae is None:
             st.caption("Model performance unavailable — showing point forecast without an MAE band.")

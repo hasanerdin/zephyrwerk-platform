@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports: ["8000:8000"]
+    # Postgres + LocalStack are NOT part of this compose file — they're the
+    # long-lived containers started by `make infra-up` (see Makefile /
+    # README "Start local infrastructure"), published on the host at
+    # 5432/4566. From inside the api container "localhost" would resolve to
+    # the container itself, not the host, so we reach them via Docker
+    # Desktop's host.docker.internal instead (extra_hosts below makes that
+    # name resolve on Linux too, where it isn't automatic).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Credentials/config come from .env (already gitignored, already the
+    # single source of truth for local secrets) rather than being duplicated
+    # here — keeps this file safe to commit even once real values replace
+    # the LocalStack test creds. `environment:` below only overrides the two
+    # keys whose .env value ("localhost") is correct for a native process
+    # but wrong for a container.
+    env_file:
+      - .env
+    environment:
+      - ZEPHYRWERK_RDS_HOST=host.docker.internal
+      - AWS_ENDPOINT_URL=http://host.docker.internal:4566
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    ports: ["8501:8501"]
+    env_file:
+      - .env
+    environment:
+      # .env's value (localhost:8000) is correct when running the dashboard
+      # natively; inside Compose's network the API is reached by service name.
+      - ZEPHYRWERK_DASHBOARD_API_URL=http://api:8000
+    depends_on:
+      api:
+        # api/Dockerfile's HEALTHCHECK hits GET /health, which itself checks
+        # DB connectivity and that all 3 models loaded from S3 — so this
+        # waits for the API to actually be ready to serve, not just for the
+        # container process to have started (plain `depends_on: [api]`
+        # would let the dashboard start querying an api that's still
+        # mid-startup, surfacing as a connection error for the first
+        # several seconds).
+        condition: service_healthy

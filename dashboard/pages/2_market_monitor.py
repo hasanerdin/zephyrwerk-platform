@@ -1,8 +1,10 @@
 """Page 2 — Market Monitor: today's snapshot + a fixed 30-day neighbour price
-spread window. Short-TTL page — data is cached (see dashboard.config ttls),
-hence the refresh-cadence caption below rather than a "last updated" clock:
-the underlying data can be stale by up to a cache TTL regardless of when the
-page last rendered."""
+spread window. The underlying data only changes once a day, when the
+ingestion pipeline runs (orchestration/run_pipeline.py's daily mode) — models
+are retrained weekly, so repeated calls the same day return identical
+numbers. The cache TTLs below just bound how far *this page* can lag behind
+that last pipeline run, not how often new numbers actually appear, hence the
+caption below rather than a "last updated" clock."""
 
 import logging
 from datetime import date, timedelta
@@ -20,8 +22,9 @@ st.title("Market Monitor")
 
 _settings = get_settings()
 st.caption(
-    f"Price forecast refreshes every {_settings.ttl_forecast // 60} min · "
-    f"neighbour price spreads refresh every {_settings.ttl_historical // 3600}h"
+    "Figures reflect the most recent daily pipeline run, not real-time data. "
+    f"This page's own cache can lag that run by up to {_settings.ttl_forecast // 60} min "
+    f"(forecast) / {_settings.ttl_historical // 3600}h (spreads)."
 )
 
 today = date.today()
@@ -57,7 +60,7 @@ st.metric("Today's avg. day-ahead price (forecast)",
 st.subheader(f"Neighbour price spreads (last {SPREAD_WINDOW_DAYS} days)")
 try:
     spreads_df = api_client.get_price_spreads(window_start, today)
-    st.plotly_chart(price_spread_bar_chart(spreads_df), use_container_width=True, theme=None)
+    st.plotly_chart(price_spread_bar_chart(spreads_df), width='stretch', theme=None)
 except api_client.ServiceUnavailableError:
     st.warning("Neighbour price data is temporarily unavailable.")
 except api_client.APIConnectionError:

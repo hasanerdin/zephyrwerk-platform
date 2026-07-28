@@ -26,7 +26,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     logger.exception(f"Unhandled error on {request.method} {request.url.path}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": f"Internal server error: {str(exc)}"},
     )
 
 app.include_router(predict_router)
