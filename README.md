@@ -98,7 +98,7 @@ Monitoring:    AWS CloudWatch (logs + cost alerts)
 | 3 — dbt | Loader, raw/staging/analytics schemas, dbt tests, Dockerfiles | ✅ Complete · `v0.3.0` |
 | 4 — ML | XGBoost price + generation (wind/solar) forecasting, model registry | ✅ Complete · `v0.4.0` |
 | 5 — API | FastAPI service, all endpoints, day-ahead prediction pipeline, pytest suite | ✅ Complete · `v0.5.0` |
-| 6 — Dashboard | Streamlit multipage dashboard, Docker Compose | 🔜 Not started |
+| 6 — Dashboard | Streamlit multipage dashboard, Docker Compose | ✅ Complete · `v0.6.0` |
 | 7 — AWS | Full cloud deployment, CI/CD, v1.0.0 release | 🔜 Not started |
 
 ---
