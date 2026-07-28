@@ -42,46 +42,160 @@ def test_module_body_has_no_bare_pipeline_calls_outside_main_guard():
     )
 
 
-# ── run_smard_single_day ─────────────────────────────────────────────────────
+# ── _missing_day_ranges ──────────────────────────────────────────────────────
 
-class TestRunSmardSingleDay:
-    def test_skips_when_already_uploaded(self):
+class TestMissingDayRanges:
+    def test_all_days_missing_collapse_into_one_range(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 5, tzinfo=timezone.utc)
+        with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False):
+            ranges = run_pipeline._missing_day_ranges(DATA_NAMES.SMARD, start, end)
+        assert len(ranges) == 1
+        range_start, range_end = ranges[0]
+        assert range_start.date() == start.date()
+        assert range_end.date() == end.date()
+
+    def test_all_days_already_uploaded_returns_no_ranges(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 5, tzinfo=timezone.utc)
+        with patch("orchestration.run_pipeline.is_already_uploaded", return_value=True) as mock_already:
+            ranges = run_pipeline._missing_day_ranges(DATA_NAMES.SMARD, start, end)
+        assert ranges == []
+        assert mock_already.call_count == 5  # one check per calendar day, no fetch needed
+
+    def test_a_gap_in_the_middle_splits_into_two_ranges(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 5, tzinfo=timezone.utc)
+
+        def already_uploaded(data_name, year, month, day):
+            return day == 3  # Jan 3rd is the only day already uploaded
+
+        with patch("orchestration.run_pipeline.is_already_uploaded", side_effect=already_uploaded):
+            ranges = run_pipeline._missing_day_ranges(DATA_NAMES.SMARD, start, end)
+
+        assert len(ranges) == 2
+        assert [r[0].day for r in ranges] == [1, 4]
+        assert [r[1].day for r in ranges] == [2, 5]
+
+    def test_single_day_range(self):
+        day = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False):
+            ranges = run_pipeline._missing_day_ranges(DATA_NAMES.SMARD, day, day)
+        assert ranges == [(day, day)]
+
+
+# ── run_smard_range ───────────────────────────────────────────────────────────
+
+class TestRunSmardRange:
+    def test_skips_fetch_when_all_days_already_uploaded(self):
         with patch("orchestration.run_pipeline.is_already_uploaded", return_value=True), \
              patch("orchestration.run_pipeline.fetch_range") as mock_fetch, \
              patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
-            run_pipeline.run_smard_single_day(START, END)
+            run_pipeline.run_smard_range(START, END)
         mock_fetch.assert_not_called()
         mock_upload.assert_not_called()
 
-    def test_fetches_and_uploads_when_not_already_uploaded(self):
-        df = pd.DataFrame({"timestamp": [START], "value": [1.0]})
+    def test_fetches_once_for_a_multi_day_missing_range(self):
+        # Regression guard: a multi-day backfill used to call fetch_range once PER
+        # DAY, redownloading the same underlying weekly SMARD chunk up to 7x. A
+        # contiguous missing stretch must now be fetched in a single call.
+        start = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 19, tzinfo=timezone.utc)
+        df = pd.DataFrame({
+            "timestamp": pd.date_range(start, periods=5, freq="D", tz="UTC"),
+            "value": range(5),
+        })
         with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False), \
              patch("orchestration.run_pipeline.fetch_range", return_value=df) as mock_fetch, \
              patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
-            run_pipeline.run_smard_single_day(START, END)
-        mock_fetch.assert_called_once_with(start_date=START, end_date=END)
-        mock_upload.assert_called_once_with(df, DATA_NAMES.SMARD)
+            run_pipeline.run_smard_range(start, end)
+
+        mock_fetch.assert_called_once()
+        assert mock_fetch.call_args.kwargs["start_date"].date() == start.date()
+        assert mock_fetch.call_args.kwargs["end_date"].date() == end.date()
+        assert mock_upload.call_count == 5  # one upload per calendar day, split from the range fetch
+
+    def test_skips_upload_when_fetch_returns_empty(self):
+        with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False), \
+             patch("orchestration.run_pipeline.fetch_range", return_value=pd.DataFrame()) as mock_fetch, \
+             patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
+            run_pipeline.run_smard_range(START, START)
+        mock_fetch.assert_called_once()
+        mock_upload.assert_not_called()
+
+    def test_continues_to_next_range_when_one_range_fails(self):
+        # Two missing ranges (split by a gap); a failure fetching the first must
+        # not prevent the second from being attempted.
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 5, tzinfo=timezone.utc)
+
+        def already_uploaded(data_name, year, month, day):
+            return day == 3
+
+        df = pd.DataFrame({"timestamp": [datetime(2024, 1, 4, tzinfo=timezone.utc)], "value": [1.0]})
+        with patch("orchestration.run_pipeline.is_already_uploaded", side_effect=already_uploaded), \
+             patch("orchestration.run_pipeline.fetch_range", side_effect=[RuntimeError("boom"), df]) as mock_fetch, \
+             patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
+            run_pipeline.run_smard_range(start, end)  # must not raise
+
+        assert mock_fetch.call_count == 2
+        mock_upload.assert_called_once()
 
 
-# ── run_weather_single_day ───────────────────────────────────────────────────
+# ── run_weather_range ─────────────────────────────────────────────────────────
 
-class TestRunWeatherSingleDay:
-    def test_skips_when_already_uploaded(self):
+class TestRunWeatherRange:
+    def test_skips_fetch_when_all_days_already_uploaded(self):
         with patch("orchestration.run_pipeline.is_already_uploaded", return_value=True), \
              patch("orchestration.run_pipeline.fetch_historical_weather") as mock_fetch, \
              patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
-            run_pipeline.run_weather_single_day(START, END)
+            run_pipeline.run_weather_range(START, END)
         mock_fetch.assert_not_called()
         mock_upload.assert_not_called()
 
-    def test_fetches_and_uploads_when_not_already_uploaded(self):
-        df = pd.DataFrame({"timestamp": [START], "value": [1.0]})
+    def test_fetches_once_for_a_multi_day_missing_range(self):
+        start = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 19, tzinfo=timezone.utc)
+        df = pd.DataFrame({
+            "timestamp": pd.date_range(start, periods=5, freq="D", tz="UTC"),
+            "value": range(5),
+        })
         with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False), \
              patch("orchestration.run_pipeline.fetch_historical_weather", return_value=df) as mock_fetch, \
              patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
-            run_pipeline.run_weather_single_day(START, END)
-        mock_fetch.assert_called_once_with(START, END)
-        mock_upload.assert_called_once_with(df, DATA_NAMES.WEATHER)
+            run_pipeline.run_weather_range(start, end)
+
+        mock_fetch.assert_called_once()
+        call_start, call_end = mock_fetch.call_args.args
+        assert call_start.date() == start.date()
+        assert call_end.date() == end.date()
+        assert mock_upload.call_count == 5
+
+    def test_skips_upload_when_fetch_returns_empty(self):
+        with patch("orchestration.run_pipeline.is_already_uploaded", return_value=False), \
+             patch("orchestration.run_pipeline.fetch_historical_weather", return_value=pd.DataFrame()) as mock_fetch, \
+             patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
+            run_pipeline.run_weather_range(START, START)
+        mock_fetch.assert_called_once()
+        mock_upload.assert_not_called()
+
+    def test_continues_to_next_range_when_one_range_fails(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 5, tzinfo=timezone.utc)
+
+        def already_uploaded(data_name, year, month, day):
+            return day == 3
+
+        df = pd.DataFrame({"timestamp": [datetime(2024, 1, 4, tzinfo=timezone.utc)], "value": [1.0]})
+        with patch("orchestration.run_pipeline.is_already_uploaded", side_effect=already_uploaded), \
+             patch(
+                 "orchestration.run_pipeline.fetch_historical_weather", side_effect=[RuntimeError("boom"), df]
+             ) as mock_fetch, \
+             patch("orchestration.run_pipeline.upload_to_s3") as mock_upload:
+            run_pipeline.run_weather_range(start, end)  # must not raise
+
+        assert mock_fetch.call_count == 2
+        mock_upload.assert_called_once()
 
 
 # ── run_weather_forecast ─────────────────────────────────────────────────────
@@ -108,28 +222,28 @@ class TestRunWeatherForecast:
 # ── fetch_yesterday_data ──────────────────────────────────────────────────────
 
 class TestFetchYesterdayData:
-    def test_fetches_smard_and_weather_for_the_same_yesterday_window(self):
-        with patch("orchestration.run_pipeline.run_smard_single_day") as mock_smard, \
-             patch("orchestration.run_pipeline.run_weather_single_day") as mock_weather:
+    def test_fetches_smard_and_weather_for_yesterday(self):
+        with patch("orchestration.run_pipeline.run_smard_range") as mock_smard, \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather:
             run_pipeline.fetch_yesterday_data()
 
         smard_start, smard_end = mock_smard.call_args.args
         weather_start, weather_end = mock_weather.call_args.args
         assert (smard_start, smard_end) == (weather_start, weather_end)
         assert smard_start.time() == time(0, 0, 0)
-        assert smard_end - smard_start == timedelta(days=1)
+        assert smard_start == smard_end  # a single calendar day
         assert smard_start.date() == (datetime.now(timezone.utc) - timedelta(days=1)).date()
 
     def test_does_not_raise_when_smard_fetch_fails(self):
-        with patch("orchestration.run_pipeline.run_smard_single_day", side_effect=RuntimeError("api down")), \
-             patch("orchestration.run_pipeline.run_weather_single_day") as mock_weather:
+        with patch("orchestration.run_pipeline.run_smard_range", side_effect=RuntimeError("api down")), \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather:
             run_pipeline.fetch_yesterday_data()  # must not raise
 
         # SMARD and weather each have their own try/except now, so a SMARD
         # failure does not prevent the weather fetch from running.
         weather_start, weather_end = mock_weather.call_args.args
         assert weather_start.time() == time(0, 0, 0)
-        assert weather_end - weather_start == timedelta(days=1)
+        assert weather_start == weather_end
         assert weather_start.date() == (datetime.now(timezone.utc) - timedelta(days=1)).date()
 
 
@@ -185,8 +299,8 @@ class TestRunDailyPipeline:
         # This is the fix for last session's finding: SMARD/weather and the
         # weekly forecast used to share one try/except, so a SMARD failure
         # silently skipped the forecast fetch too. They're now decoupled.
-        with patch("orchestration.run_pipeline.run_smard_single_day", side_effect=RuntimeError("api down")), \
-             patch("orchestration.run_pipeline.run_weather_single_day") as mock_weather, \
+        with patch("orchestration.run_pipeline.run_smard_range", side_effect=RuntimeError("api down")), \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather, \
              patch("orchestration.run_pipeline.run_weather_forecast") as mock_forecast, \
              patch("orchestration.run_pipeline.load_range") as mock_load_range, \
              patch("orchestration.run_pipeline.run_dbt") as mock_dbt:
@@ -202,43 +316,64 @@ class TestRunDailyPipeline:
 # ── run_historical_pipeline ──────────────────────────────────────────────────
 
 class TestRunHistoricalPipeline:
-    def test_iterates_each_day_and_continues_after_a_day_fails(self):
+    def test_calls_smard_and_weather_range_once_each_then_loads_and_runs_dbt(self):
+        # Regression guard: the historical path used to loop day-by-day and call
+        # a single-day fetch helper once per calendar day (redownloading the same
+        # underlying weekly SMARD chunk up to 7x for a multi-day range). It now
+        # delegates the whole range to run_smard_range/run_weather_range once,
+        # which do their own internal batching by contiguous missing-day stretch.
         start = datetime(2024, 1, 1, tzinfo=timezone.utc)
         end = datetime(2024, 1, 3, tzinfo=timezone.utc)
-        with patch(
-                "orchestration.run_pipeline.run_smard_single_day",
-                side_effect=[RuntimeError("boom"), None, None],
-            ) as mock_smard, \
-             patch("orchestration.run_pipeline.run_weather_single_day") as mock_weather, \
+        with patch("orchestration.run_pipeline.run_smard_range") as mock_smard, \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather, \
              patch("orchestration.run_pipeline.load_range") as mock_load_range, \
              patch("orchestration.run_pipeline.run_dbt") as mock_dbt, \
              patch("orchestration.run_pipeline.run_model_training") as mock_training:
             run_pipeline.run_historical_pipeline(start, end)
 
-        assert mock_smard.call_count == 3
-        assert mock_weather.call_count == 2  # skipped for the day that raised
+        mock_smard.assert_called_once_with(start, end)
+        mock_weather.assert_called_once_with(start, end)
         mock_load_range.assert_called_once_with(start, end)
+        mock_dbt.assert_any_call("run")
+        mock_dbt.assert_any_call("test")
+        mock_training.assert_called_once()
+
+    def test_weather_and_downstream_steps_still_run_when_smard_range_fails(self):
+        # SMARD and weather batching each have their own try/except, so a failure
+        # fetching the whole SMARD range must not skip the weather fetch, nor the
+        # downstream load/dbt/training steps.
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 3, tzinfo=timezone.utc)
+        with patch("orchestration.run_pipeline.run_smard_range", side_effect=RuntimeError("boom")), \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather, \
+             patch("orchestration.run_pipeline.load_range") as mock_load_range, \
+             patch("orchestration.run_pipeline.run_dbt") as mock_dbt, \
+             patch("orchestration.run_pipeline.run_model_training") as mock_training:
+            run_pipeline.run_historical_pipeline(start, end)  # must not raise
+
+        mock_weather.assert_called_once()
+        mock_load_range.assert_called_once()
         mock_dbt.assert_any_call("run")
         mock_dbt.assert_any_call("test")
         mock_training.assert_called_once()
 
     def test_end_date_is_clamped_to_yesterday_when_given_a_future_date(self):
         # Regression guard: a requested end date at or after "today" must not
-        # balloon the loop into thousands of daily fetch calls (previously a
-        # `max()` vs `min()` bug caused exactly that).
+        # balloon into fetching thousands of days (previously a `max()` vs `min()`
+        # bug caused exactly that).
         start = datetime(2024, 1, 1, tzinfo=timezone.utc)
         far_future_end = datetime(2099, 1, 1, tzinfo=timezone.utc)
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-        expected_days = (yesterday - start.date()).days + 1
 
-        with patch("orchestration.run_pipeline.run_smard_single_day") as mock_smard, \
-             patch("orchestration.run_pipeline.run_weather_single_day"), \
+        with patch("orchestration.run_pipeline.run_smard_range") as mock_smard, \
+             patch("orchestration.run_pipeline.run_weather_range") as mock_weather, \
              patch("orchestration.run_pipeline.load_range") as mock_load_range, \
              patch("orchestration.run_pipeline.run_dbt"), \
              patch("orchestration.run_pipeline.run_model_training"):
             run_pipeline.run_historical_pipeline(start, far_future_end)
 
-        assert mock_smard.call_count == expected_days
+        assert mock_smard.call_args.args[1].date() == yesterday
+        assert mock_weather.call_args.args[1].date() == yesterday
         loaded_end = mock_load_range.call_args.args[1]
         assert loaded_end.date() == yesterday
 

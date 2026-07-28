@@ -13,6 +13,7 @@ from ingestion.smard_client import (
     Units,
     _get_index,
     _get_series,
+    _get_series_with_retry,
     fetch_range,
 )
 
@@ -101,6 +102,53 @@ class TestGetSeries:
             f"https://www.smard.de/app/chart_data/{ENERGY_SOURCE.WIND_ONSHORE.value}/{REGION.DE.value}/{ENERGY_SOURCE.WIND_ONSHORE.value}_{REGION.DE.value}_{RESOLUTION.HOUR.value}_{self.CHUNK_TS}.json",
             timeout=MAX_TIME_OUT
         )
+
+
+# ── _get_series_with_retry ──────────────────────────────────────────────────────
+
+class TestGetSeriesWithRetry:
+    CHUNK_TS = 1704067200000
+
+    def test_retries_after_rate_limit_then_succeeds(self):
+        # Regression guard: `raise Exception("Max retries exceeded")` used to sit
+        # inside the for-loop body, so a single 429 killed the fetch after one sleep
+        # instead of looping back for another attempt.
+        expected = [[self.CHUNK_TS, 100.0]]
+        responses = [_mock_response({}, status_code=429), _mock_response({"series": expected})]
+        with patch("ingestion.smard_client.requests.get", side_effect=responses), \
+             patch("ingestion.smard_client.time.sleep") as mock_sleep:
+            result = _get_series_with_retry(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR, self.CHUNK_TS)
+        assert result == expected
+        mock_sleep.assert_called_once()
+
+    def test_retries_after_server_error_then_succeeds(self):
+        expected = [[self.CHUNK_TS, 100.0]]
+        responses = [_mock_response({}, status_code=503), _mock_response({"series": expected})]
+        with patch("ingestion.smard_client.requests.get", side_effect=responses), \
+             patch("ingestion.smard_client.time.sleep") as mock_sleep:
+            result = _get_series_with_retry(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR, self.CHUNK_TS)
+        assert result == expected
+        mock_sleep.assert_called_once()
+
+    def test_raises_after_exhausting_all_retries(self):
+        with patch("ingestion.smard_client.requests.get") as mock_get, \
+             patch("ingestion.smard_client.time.sleep") as mock_sleep:
+            mock_get.return_value = _mock_response({}, status_code=429)
+            with pytest.raises(Exception, match="Max retries exceeded"):
+                _get_series_with_retry(
+                    ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR, self.CHUNK_TS, max_retries=3
+                )
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 3
+
+    def test_does_not_retry_on_4xx_client_error(self):
+        with patch("ingestion.smard_client.requests.get") as mock_get, \
+             patch("ingestion.smard_client.time.sleep") as mock_sleep:
+            mock_get.return_value = _mock_response({}, status_code=404)
+            with pytest.raises(requests.HTTPError):
+                _get_series_with_retry(ENERGY_SOURCE.WIND_ONSHORE, REGION.DE, RESOLUTION.HOUR, self.CHUNK_TS)
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 # ── fetch_range ───────────────────────────────────────────────────────────────

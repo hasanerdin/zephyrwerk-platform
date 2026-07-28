@@ -1,5 +1,6 @@
 import logging
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -8,6 +9,8 @@ from api.routers.health import router as health_router
 from api.routers.performance import router as performance_router
 from api.routers.predict import router as predict_router
 from api.services.model_loader import lifespan as model_lifespan
+
+load_dotenv()  # Load environment variables from .env file
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +26,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     logger.exception(f"Unhandled error on {request.method} {request.url.path}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": f"Internal server error: {str(exc)}"},
     )
 
 app.include_router(predict_router)

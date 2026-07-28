@@ -11,6 +11,7 @@ from ingestion.weather_client import (
     Region,
     SignalType,
     _fetch_single_region_weather,
+    _fetch_single_region_weather_with_retry,
     fetch_forecast_weather,
     fetch_historical_weather,
 )
@@ -141,6 +142,49 @@ class TestFetchSingleRegionWeather:
             mock_get.side_effect = requests.exceptions.ConnectionError("timeout")
             with pytest.raises(requests.exceptions.ConnectionError):
                 _fetch_single_region_weather(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
+
+
+# ── _fetch_single_region_weather_with_retry ─────────────────────────────────────
+
+class TestFetchSingleRegionWeatherWithRetry:
+    def test_retries_after_rate_limit_then_succeeds(self):
+        # Regression guard: `raise Exception("Max retries exceeded")` used to sit
+        # inside the for-loop body, so a single 429 killed the fetch after one sleep
+        # instead of looping back for another attempt.
+        responses = [_mock_response({}, status_code=429), _mock_response(API_RESPONSE)]
+        with patch("ingestion.weather_client.requests.get", side_effect=responses), \
+             patch("ingestion.weather_client.time.sleep") as mock_sleep:
+            df = _fetch_single_region_weather_with_retry(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
+        assert len(df) == len(TIMES) * len(SignalType)
+        mock_sleep.assert_called_once()
+
+    def test_retries_after_server_error_then_succeeds(self):
+        responses = [_mock_response({}, status_code=503), _mock_response(API_RESPONSE)]
+        with patch("ingestion.weather_client.requests.get", side_effect=responses), \
+             patch("ingestion.weather_client.time.sleep") as mock_sleep:
+            df = _fetch_single_region_weather_with_retry(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
+        assert len(df) == len(TIMES) * len(SignalType)
+        mock_sleep.assert_called_once()
+
+    def test_raises_after_exhausting_all_retries(self):
+        with patch("ingestion.weather_client.requests.get") as mock_get, \
+             patch("ingestion.weather_client.time.sleep") as mock_sleep:
+            mock_get.return_value = _mock_response({}, status_code=429)
+            with pytest.raises(Exception, match="Max retries exceeded"):
+                _fetch_single_region_weather_with_retry(
+                    Region.BAVARIA, START, END, BASE_HISTORICAL_URL, max_retries=3
+                )
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 3
+
+    def test_does_not_retry_on_4xx_client_error(self):
+        with patch("ingestion.weather_client.requests.get") as mock_get, \
+             patch("ingestion.weather_client.time.sleep") as mock_sleep:
+            mock_get.return_value = _mock_response({}, status_code=404)
+            with pytest.raises(requests.HTTPError):
+                _fetch_single_region_weather_with_retry(Region.BAVARIA, START, END, BASE_HISTORICAL_URL)
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 # ── fetch_historical_weather / fetch_forecast_weather ──────────────────────────

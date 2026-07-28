@@ -167,6 +167,7 @@ The hardest part of this phase was serving day-ahead predictions correctly: the 
 
 - **Python 3.12** managed via [`uv`](https://docs.astral.sh/uv/) — pinned to 3.12 because `dbt-core`'s `mashumaro` dependency fails on 3.14
 - **Docker** — runs LocalStack (S3 emulator) and PostgreSQL locally
+- **Make** — the commands below are `make` targets (see the `Makefile`); run `make help` for the full list
 
 ### Install
 
@@ -194,78 +195,77 @@ Key variables:
 | `ZEPHYRWERK_RDS_HOST` | `localhost` | PostgreSQL host |
 | `ZEPHYRWERK_RDS_PORT` | `5432` | PostgreSQL port |
 | `ZEPHYRWERK_RDS_DB` | `zephyrwerk` | Database name |
+| `ZEPHYRWERK_RDS_USER` | `zephyrwerk` | App-level DB role — not the container's superuser, see below |
 
 ### Start local infrastructure
 
 ```bash
-# LocalStack — S3 emulation. Pinned to 3.8: LocalStack 2026.x requires a
-# paid license for S3 (fails with exit code 55); 3.8 is the last free one.
-# Volume mount matters — the full historical backfill takes hours, and
-# without it a container restart loses everything.
-docker run --rm -d \
-  -p 4566:4566 \
-  -v localstack-data:/var/lib/localstack \
-  --name localstack \
-  localstack/localstack:3.8
-
-# PostgreSQL — mounts db/init.sql which creates raw, staging,
-# analytics schemas and all five raw tables (including weather_forecast)
-# on first start
-docker run -d \
-  --name zephyrwerk-postgres \
-  -p 5432:5432 \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=zephyrwerk \
-  -v "$(pwd)/db/init.sql:/docker-entrypoint-initdb.d/init.sql" \
-  postgres:16
+make infra-up
 ```
 
-> If the container already existed before `weather_forecast` was added to
-> `init.sql`, the mounted script only runs on first container init. Apply
-> it manually instead: `docker exec -i zephyrwerk-postgres psql -U postgres -d zephyrwerk < db/init.sql`
-> (safe to re-run — every statement is `CREATE ... IF NOT EXISTS`).
+Starts LocalStack (S3 emulation, pinned to 3.8 — LocalStack 2026.x
+requires a paid license for S3) and PostgreSQL, waits for LocalStack to
+report healthy, and creates the `zephyrwerk-data-lake` bucket.
+PostgreSQL's container mounts `db/init.sql`, which creates the raw,
+staging, analytics schemas, all five raw tables (including
+`weather_forecast`), and the `zephyrwerk` app role. Run `make
+localstack-up` / `make postgres-up` individually if you only need one;
+see the `Makefile` for the underlying `docker run` commands.
+
+> If Postgres already existed before `weather_forecast` or the
+> `zephyrwerk` role were added to `init.sql`, the mounted script only
+> runs on first container init. Apply it manually instead:
+> `docker exec -i zephyrwerk-postgres psql -U postgres -d zephyrwerk < db/init.sql`
+> — safe to re-run, every statement either uses `IF NOT EXISTS` or
+> checks first. The bucket creation in `make localstack-up` is also
+> safe to re-run: `s3 mb` on an existing bucket is a no-op error.
+
+### dbt one-time setup
+
+```bash
+make dbt-deps
+make dbt-seed
+```
+
+Do this before the first pipeline run, not after. `run_pipeline.py`'s
+`run_dbt()` runs `dbt run`/`dbt test` automatically after every
+`--mode daily` and `--mode historical` ingestion (see
+`run_daily_pipeline()` / `run_historical_pipeline()`) — and that `dbt
+run` fails immediately if `dbt_utils` isn't installed or the German
+public holidays seed hasn't been loaded yet (`dim_date` joins against
+it). `--mode weekly` skips dbt entirely — it only retrains models from
+data already in `fct_ml_features`.
+
+Both targets wrap `dotenv run -- dbt ... --project-dir dbt
+--profiles-dir dbt`: unlike `run_pipeline.py`, the `dbt` CLI doesn't
+read `.env` on its own — `dbt/profiles.yml` pulls credentials via
+`env_var(...)`, which only sees real OS environment variables — so
+`dotenv run --` (from `python-dotenv`, already a project dependency)
+loads `.env` for that one command. Going through `make` also means it
+works regardless of your shell's current directory.
+
+> To iterate on dbt models directly without re-running ingestion, use
+> `make dbt-run` / `make dbt-test`.
 
 ### Run the ingestion pipeline
 
-`orchestration/run_pipeline.py` has three modes:
-
 ```bash
-# Historical backfill (one-time, full window) — end date is always
-# clamped to yesterday, since no future SMARD data can ever exist
-python orchestration/run_pipeline.py --mode historical --start_date 2019-01-01 --end_date 2025-12-31
-
-# Daily run — yesterday's real SMARD + weather data, plus an 8-day-ahead
-# weather forecast fetch (feeds the API's /predict/* endpoints)
-python orchestration/run_pipeline.py --mode daily
-
-# Weekly — retrains and re-publishes all 3 models from whatever's
-# currently in fct_ml_features. Deliberately independent of --mode daily
-# (separate failure domain) — in production these are two separate
-# EventBridge/Step Functions triggers, sequenced by time (daily at 06:00
-# UTC, weekly at 07:00 UTC on Mondays) so weekly always sees that
-# morning's fresh data. Locally, run --mode daily first if you want the
-# same guarantee.
-python orchestration/run_pipeline.py --mode weekly
+make pipeline-historical START=2019-01-01                  # one-time, full backfill through yesterday
+make pipeline-historical START=2019-01-01 END=2025-12-31    # or bound it explicitly
+make pipeline-daily                                         # yesterday's SMARD + weather, 8-day forecast
+make pipeline-weekly                                        # retrains + republishes all 3 models
 ```
+
+`START` is required; `END` is optional and defaults to yesterday, since
+no future SMARD data can ever exist. `pipeline-weekly` retrains from
+whatever's currently in `fct_ml_features` and is deliberately
+independent of `pipeline-daily` (separate failure domain) — in
+production these are two separate EventBridge/Step Functions triggers,
+sequenced by time (daily at 06:00 UTC, weekly at 07:00 UTC on Mondays)
+so weekly always sees that morning's fresh data. Locally, run
+`pipeline-daily` first if you want the same guarantee.
 
 The pipeline is idempotent: re-running a date range skips Parquet files already in S3, and the loader upserts into Postgres so SMARD value revisions are picked up correctly. Forecast weather is re-fetched daily and superseded by the real observed value once that day's normal ingestion runs — the loader's upsert naturally overwrites forecast with actual, no reconciliation step needed.
-
-### Run dbt transformations
-
-```bash
-cd dbt
-
-# One-time setup
-dbt deps                          # installs dbt_utils
-dbt seed --profiles-dir .         # loads German public holidays CSV
-
-# Build and test
-dbt run  --profiles-dir .         # builds staging views + analytics tables
-dbt test --profiles-dir .         # runs schema tests + singular tests
-```
-
-> `dbt` is deliberately **not** wired into `run_pipeline.py`. In production (Phase 7) ingestion, loader, and dbt run as separate ECS tasks orchestrated by Step Functions — keeping them separate locally preserves architectural honesty.
 
 ### Run EDA notebooks
 
@@ -297,6 +297,24 @@ uv run uvicorn api.main:app --reload
 Then visit `http://127.0.0.1:8000/docs` for interactive OpenAPI docs, or
 check `http://127.0.0.1:8000/health` to confirm DB connectivity and that
 all three models loaded successfully from S3.
+
+### Run the dashboard
+
+```bash
+uv run streamlit run dashboard/app.py
+```
+
+Visit `http://localhost:8501`. Needs the API running (`ZEPHYRWERK_DASHBOARD_API_URL`, default `http://localhost:8000`) — see above.
+
+### Run API + dashboard with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Requires `.env` (see "Configure environment" above) — both services load it via `env_file`, so no credentials are duplicated into `docker-compose.yml` itself. Builds `api/Dockerfile` and `dashboard/Dockerfile` and runs both containers on one network — the dashboard reaches the API at `http://api:8000` (Compose's built-in service-name DNS), not `localhost`. API at `http://localhost:8000`, dashboard at `http://localhost:8501`.
+
+`docker-compose.yml` deliberately does **not** include Postgres or LocalStack — those stay the long-lived `make infra-up` containers (see above), reached from inside the `api` container via `host.docker.internal` rather than `localhost`, since `localhost` inside a container refers to the container itself. Run `make infra-up` first if they're not already up. `docker-compose.yml` overrides `ZEPHYRWERK_RDS_HOST` and `AWS_ENDPOINT_URL` on top of `.env` for this reason — `.env`'s `localhost` is correct for native processes, not containers.
 
 ### Run tests
 
