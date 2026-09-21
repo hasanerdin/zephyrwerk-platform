@@ -63,3 +63,9 @@ variable "rds_subnet_group" {
   type        = string
   default     = "zephyrwerk-rds-subnet-group"
 }
+
+variable "rds_username" {
+  description = "Username for the RDS database"
+  type        = string
+  default     = "zephyrwerk_admin"
+}
