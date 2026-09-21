@@ -37,6 +37,9 @@ dbt/.user.yml
 
 # AWS
 .aws/
+*.tfstate
+*.tfstate.backup
+.terraform/
 
 # Docker override (local tweaks, never committed)
 docker-compose.override.yml
