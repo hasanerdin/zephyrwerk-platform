@@ -40,3 +40,26 @@ variable "public_subnets" {
   default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
+variable "pipeline_sg" {
+  description = "Security group for the pipeline"
+  type        = string
+  default     = "zephyrwerk-pipeline-sg"
+}
+
+variable "api_sg" {
+  description = "Security group for the API"
+  type        = string
+  default     = "zephyrwerk-api-sg"
+}
+
+variable "rds_sg" {
+  description = "Security group for the database"
+  type        = string
+  default     = "zephyrwerk-rds-sg"
+}
+
+variable "rds_subnet_group" {
+  description = "Name of the RDS subnet group"
+  type        = string
+  default     = "zephyrwerk-rds-subnet-group"
+}
