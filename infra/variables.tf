@@ -69,3 +69,9 @@ variable "rds_username" {
   type        = string
   default     = "zephyrwerk_admin"
 }
+
+variable "ecr_container_names" {
+  description = "List of container names for the ECR repositories"
+  type        = set(string)
+  default     = ["api", "dashboard", "ingestion", "dbt", "ml"]
+}
