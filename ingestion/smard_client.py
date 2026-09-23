@@ -258,6 +258,12 @@ def fetch_range(start_date: datetime, end_date: datetime):
     return df.sort_values("timestamp").reset_index(drop=True)
 
 if __name__ == "__main__":
+    logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler()],
+        )
+    
     start_date = datetime.now(timezone.utc) - timedelta(days=7)
     end_date = datetime.now(timezone.utc)
     

@@ -34,7 +34,7 @@ dbt/.user.yml
 # ML artifacts — live in S3, not Git
 *.pkl
 *.joblib
-ml/artifacts/
+ml/artifacts
 
 # AWS
 .aws/

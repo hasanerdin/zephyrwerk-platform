@@ -14,8 +14,7 @@ WORKDIR /app/dbt
 
 RUN dbt deps --profiles-dir .
 
-RUN mkdir -p /app/dbt/logs /app/dbt/target
-RUN chown -R appuser:appuser /app/dbt/logs /app/dbt/target
+RUN mkdir -p /app/dbt/logs /app/dbt/target && chown -R appuser:appuser /app/dbt/logs /app/dbt/target
 
 USER appuser
 

@@ -15,9 +15,6 @@ COPY db/ ./db/
 # Install build tools and project dependencies
 RUN pip install --no-cache-dir .
 
-RUN mkdir -p /ml/artifacts
-RUN chown -R appuser:appuser /ml/artifacts
-
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

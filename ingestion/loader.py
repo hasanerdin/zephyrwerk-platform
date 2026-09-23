@@ -12,7 +12,6 @@ from db.settings import Settings, get_settings
 from ingestion.s3_uploader import DATA_NAMES, get_file_name
 from ingestion.smard_client import CONSUMPTION_TYPE, ENERGY_SOURCE, NEIGHBORING_REGION
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # --- routing: signal name -> table name ---
@@ -207,6 +206,12 @@ def load_range(start_date: datetime, end_date: datetime) -> None:
     
 
 if __name__ == "__main__":
+    logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler()],
+        )
+    
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
     load_range(datetime(2019, 1, 1), end)
     print('End date used:', end.date())
