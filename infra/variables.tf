@@ -75,3 +75,63 @@ variable "ecr_container_names" {
   type        = set(string)
   default     = ["api", "dashboard", "ingestion", "dbt", "ml"]
 }
+
+variable "ecs_execution_name" {
+  description = "Name of the ECS execution role"
+  type        = string
+  default     = "zephyrwerk-ecs-role-execution"
+}
+
+variable "ecs_task_ingestion_name" {
+  description = "Name of the ECS task role for ingestion service"
+  type        = string
+  default     = "zephyrwerk-ecs-task-role-ingestion"
+}
+
+variable "ecs_task_api_name" {
+  description = "Name of the ECS task role for API service"
+  type        = string
+  default     = "zephyrwerk-ecs-task-role-api"
+}
+
+variable "ecs_task_ml_name" {
+  description = "Name of the ECS task role for ML model training and inference"
+  type        = string
+  default     = "zephyrwerk-ecs-task-role-ml"
+}
+
+variable "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group for the pipeline"
+  type        = string
+  default     = "/zephyrwerk/pipeline"
+}
+
+variable "ecs_cluster_name" {
+  description = "Name of the ECS cluster"
+  type        = string
+  default     = "zephyrwerk-cluster"
+}
+
+variable "image_tag" {
+  description = "Tag for the Docker images"
+  type        = string
+  default     = "71a3c94"
+}
+
+variable "smard_base_url" {
+  description = "Base URL for the SMARD API"
+  type        = string
+  default     = "https://www.smard.de/app/chart_data"
+}
+
+variable "openmeteo_forecast_url" {
+  description = "Base URL for the Open-Meteo forecast API"
+  type        = string
+  default     = "https://api.open-meteo.com/v1/forecast"
+}
+
+variable "openmeteo_history_url" {
+  description = "Base URL for the Open-Meteo historical data API"
+  type        = string
+  default     = "https://archive-api.open-meteo.com/v1/archive"
+}

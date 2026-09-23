@@ -4,6 +4,7 @@ One task per invocation, so each ECS task runs a single unit of work:
 
     python -m ingestion --task smard
     python -m ingestion --task smard --start_date 2019-01-01 --end_date 2019-12-31
+    python -m ingestion --task init-db
 
 With no dates given, each task uses its daily default. Logs go to stdout only;
 ECS forwards stdout to CloudWatch, and a log file inside a container is lost
@@ -14,10 +15,12 @@ import argparse
 import logging
 from datetime import datetime, timedelta, timezone
 
+from db.init_db import init_db
 from ingestion.loader import load_range
 from ingestion.tasks import run_smard_range, run_weather_forecast, run_weather_range
 
-TASKS = ("smard", "weather", "weather_forecast", "load")
+DATED_TASKS = ("smard", "weather", "weather_forecast", "load")
+TASKS = DATED_TASKS + ("init-db",)
 
 FORECAST_DAYS = 7
 
@@ -36,12 +39,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--start_date",
         type=str,
-        help="Start date (YYYY-MM-DD). Defaults to the task's daily window.",
+        help="Start date (YYYY-MM-DD). Defaults to the task's daily window. Ignored by init-db.",
     )
     parser.add_argument(
         "--end_date",
         type=str,
-        help="End date (YYYY-MM-DD). Defaults to the task's daily window.",
+        help="End date (YYYY-MM-DD). Defaults to the task's daily window. Ignored by init-db.",
     )
     return parser.parse_args()
 
@@ -51,7 +54,7 @@ def _parse_date(value: str) -> datetime:
 
 
 def _default_window(task: str) -> tuple[datetime, datetime]:
-    """The window each task uses when no dates are passed on the command line."""
+    """The window each dated task uses when no dates are passed on the command line."""
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday = today - timedelta(days=1)
 
@@ -83,6 +86,13 @@ def main() -> None:
     )
 
     args = parse_arguments()
+
+    if args.task == "init-db":
+        logger.info("Starting task 'init-db'.")
+        init_db()
+        logger.info("Task 'init-db' completed.")
+        return
+
     start_date, end_date = resolve_window(args)
 
     logger.info(f"Starting task '{args.task}' for {start_date.date()} to {end_date.date()}.")

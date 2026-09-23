@@ -12,3 +12,13 @@ output "ecr_repository_urls" {
   value       = { for name, repo in aws_ecr_repository.zephyrwerk_ecr : name => repo.repository_url }
   description = "The URLs of the ECR repositories for Zephyrwerk"
 }
+
+output "public_subnet_ids" {
+  value       = aws_subnet.public[*].id
+  description = "The IDs of the AWS public subnets"
+}
+
+output "pipeline_security_group_id" {
+  value       = aws_security_group.zephyrwerk_pipeline_sg.id
+  description = "The ID of the security group for the pipeline"
+}
