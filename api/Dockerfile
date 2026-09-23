@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+RUN useradd --create-home appuser
+
 WORKDIR /app
 
 # pyproject.toml declares source packages, so source must exist before pip install
@@ -12,6 +14,11 @@ COPY db/ ./db/
 
 # Install build tools and project dependencies
 RUN pip install --no-cache-dir .
+
+RUN mkdir -p /ml/artifacts
+RUN chown -R appuser:appuser /ml/artifacts
+
+USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"
