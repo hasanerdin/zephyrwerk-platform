@@ -314,6 +314,10 @@ MONITORING:   AWS CloudWatch (logs + cost alerts)
 | Containerization | **Docker** (per-service Dockerfiles) | Local dev parity. Images pushed to ECR for production. Docker Compose used only in Phases 6 (local) and removed in Phase 7 — see Section 16. |
 | CI/CD | **GitHub Actions → ECR → ECS** | Industry standard. Free for public repos. |
 | Monitoring | **AWS CloudWatch** | Native AWS. Free tier covers logs and basic metrics. |
+| Infrastructure as Code | **Terraform** | Provider-agnostic, dominant in German job market. State kept locally (single-developer project); `*.tfstate` gitignored. |
+| Network | **Custom VPC** — 2 public + 2 private subnets across 2 AZs, no NAT Gateway | Containers run in public subnets protected by security groups; RDS stays private. NAT Gateway (~$38/month) is not justified for a short-lived learning deployment. In production, containers would sit in private subnets behind NAT. |
+| CPU architecture | **ARM64 (Fargate Graviton)** | Matches the Apple Silicon dev machine, so images build natively without emulation, and ARM Fargate is ~20% cheaper than x86. |
+| Container security | **Non-root `USER` in every image** | Limits what an attacker can do inside a compromised container. |
 
 ### Explicitly Rejected Alternatives
 
@@ -325,6 +329,8 @@ MONITORING:   AWS CloudWatch (logs + cost alerts)
 | Apache Airflow | MWAA costs ~$300/month. Docker Compose Airflow is heavy for local dev. Simple Python orchestration is sufficient. |
 | AWS Athena / Glue | Adds complexity without proportional benefit at this scale. RDS PostgreSQL is simpler and faster. |
 | AWS MWAA | Too expensive for a portfolio project. |
+| AWS IAM Identity Center | Requires AWS Organizations, which immediately voids Free Tier credits on a new account. A single IAM user with MFA is used instead. |
+| terraform-aws-modules/vpc | Hides exactly the concepts this phase exists to learn (route tables, gateways, subnet associations). Resources written explicitly instead. |
 
 ---
 
@@ -340,19 +346,18 @@ Rationale: German source data, German target employers, lowest latency for the u
 
 Resources follow the pattern `zephyrwerk-{resource-type}` with an optional `-{qualifier}` (e.g. environment) where it adds clarity. Note: the S3 bucket name must be **globally unique across all AWS accounts**, so it carries a region suffix (see note below).
 
-> ⚠️ **NOTE (verify in Phase 7):** `zephyrwerk-data-lake` is a generic name and may already be taken globally. Plan to use a unique suffix such as `zephyrwerk-data-lake-eucentral1` or a short random suffix. Once chosen, the final bucket name must be updated consistently everywhere in this document and in all `.env` files.
+✅ RESOLVED (Phase 7): zephyrwerk-data-lake was available globally; no suffix was needed. The name is final.
 
 | Resource | Name | Notes |
 |---|---|---|
-| S3 Bucket | `zephyrwerk-data-lake` *(may need unique suffix — see note)* | Single bucket, prefixes separate layers |
-| RDS Instance | `zephyrwerk-rds-prod` | PostgreSQL 15, `db.t3.micro` (free tier) |
+| S3 Bucket | `zephyrwerk-data-lake` | Single bucket, prefixes separate layers |
+| RDS Instance | `zephyrwerk-rds-prod` | PostgreSQL 16 (16 to match the local Docker image — cloud parity requires identical major versions.), `db.t3.micro`|
 | ECS Cluster | `zephyrwerk-cluster` | Fargate launch type |
 | ECS Service (API) | `zephyrwerk-api-service` | FastAPI container |
 | ECS Service (Dashboard) | `zephyrwerk-dashboard-service` | Streamlit container |
 | ECR Repo (API) | `zephyrwerk-api` | Docker image registry |
 | ECR Repo (Dashboard) | `zephyrwerk-dashboard` | Docker image registry |
-| ECR Repo (Ingestion) | `zephyrwerk-ingestion` | Docker image registry |
-| ECR Repo (Loader) | `zephyrwerk-loader` | Docker image registry |
+| ECR Repo (Ingestion) | zephyrwerk-ingestion | Docker image registry — also runs the loader task (same image, different command) |
 | ECR Repo (dbt) | `zephyrwerk-dbt` | Docker image registry |
 | ECR Repo (ML) | `zephyrwerk-ml` | Docker image registry |
 | Step Functions | `zephyrwerk-daily-pipeline` | State machine for daily run |
@@ -759,12 +764,13 @@ New skills: Streamlit multipage architecture, Plotly time-series visualizations
 Deliverables:
 - S3 bucket provisioned with correct structure and IAM policies
 - RDS PostgreSQL instance provisioned
-- ECR repositories for all 4 Docker images
+- ECR repositories for all 5 Docker images (api, dashboard, ingestion, dbt, ml)
 - ECS Fargate cluster with API and Dashboard services
 - Step Functions state machine for daily pipeline
 - EventBridge rule: daily trigger at 06:00 UTC
 - IAM roles with least-privilege policies
 - CloudWatch log groups + budget alert ($20/month threshold)
+- VPC, subnets, route tables and security groups provisioned via Terraform
 - GitHub Actions:
   - On PR: pytest + dbt tests
   - On merge to main: build → ECR push → ECS deploy
@@ -778,10 +784,14 @@ New skills: ECS Fargate, ECR, Step Functions, EventBridge, IAM, CloudWatch, full
 ## 14. Cost Management
 
 ### Free Tier Coverage
+NOTE: The 12-month Free Tier no longer applies to accounts created after July 2025. 
+New accounts get $100 in credits at sign-up plus up to $100 more for completing onboarding activities, 
+valid for 6 months or until the credits run out. This deployment runs on credits, not on a perpetual free tier.
+
 | Service | Free Tier | Expected Usage |
 |---|---|---|
 | S3 | 5GB storage, 20k GET, 2k PUT/month | Well within free tier |
-| RDS PostgreSQL | 750hrs `db.t3.micro`/month (12 months) | Single instance, covered |
+| RDS PostgreSQL | No free tier for new accounts | ~$0.50/day for db.t3.micro in eu-central-1 |
 | ECS Fargate | No free tier | Main cost driver |
 | ECR | 500MB/month | Covered |
 | CloudWatch | 10 custom metrics, 5GB logs | Covered |
@@ -798,11 +808,13 @@ New skills: ECS Fargate, ECR, Step Functions, EventBridge, IAM, CloudWatch, full
 ### Estimated Monthly Cost (Production)
 | Resource | Estimated Cost |
 |---|---|
-| RDS `db.t3.micro` | ~$15/month (after free tier year) |
+| RDS `db.t3.micro` | ~$15/month |
 | ECS Fargate (API + Dashboard, 24/7) | ~$15–25/month |
 | ECS Tasks (ingestion + dbt + ML, daily) | ~$2–5/month with Spot |
 | S3 storage | < $1/month |
-| **Total** | **~$30–45/month** |
+| Public IPv4 addresses (API + Dashboard, 24/7) | ~$7/month |
+| Secrets Manager (1 secret) | ~$0.40/month |
+| **Total** | **~$40–55/month** |
 
 ---
 
@@ -945,10 +957,12 @@ zephyrwerk-platform/
 │   ├── weather_client.py        # Open-Meteo API client (historical + forecast)
 │   ├── s3_uploader.py           # writes Parquet to S3 raw layer
 │   ├── loader.py                # reads Parquet from S3, bulk inserts into PostgreSQL raw schema
+│   ├── tasks.py                 # fetch-and-upload tasks (moved out of run_pipeline.py)
+│   ├── __main__.py              # container entry point: python -m ingestion --task {smard|weather|weather_forecast|load}
 │   └── Dockerfile               # covers ingestion + loader (same container)
 │
 ├── orchestration/
-│   └── run_pipeline.py          # Local: ingestion → loader → dbt run → (optionally ML)
+│   └── run_pipeline.py          # Local only — thin wrapper calling ingestion/ml functions in order. Replaced by Step Functions in AWS.
 │
 ├── dbt/
 │   ├── dbt_project.yml
@@ -1000,6 +1014,15 @@ zephyrwerk-platform/
 │   ├── api_client.py            # cached FastAPI client
 │   └── Dockerfile
 │
+├── infra/                       # Terraform (IaC)
+│   ├── main.tf                  # providers, S3 data lake
+│   ├── network.tf               # VPC, subnets, IGW, route tables
+│   ├── security_groups.tf       # pipeline / api / rds security groups
+│   ├── ecr.tf                   # 5 image repositories + lifecycle policies
+│   ├── rds.tf                   # subnet group, secret, PostgreSQL instance
+│   ├── variables.tf
+│   └── outputs.tf
+│
 ├── notebooks/
 │   └── eda/
 │       ├── 01_energy_mix_history.ipynb
@@ -1029,5 +1052,4 @@ zephyrwerk-platform/
 ---
 
 *Document maintained by: Hasan Erdin*  
-*Last updated: May 2026 — v1.7: Fixed architectural gap — added loader.py (S3 Parquet → PostgreSQL raw schema) as the missing ELT load step; updated architecture diagram, daily pipeline flow (now 5 steps), ECR repos, RDS schema (now 3 layers: raw/staging/analytics), Phase 1 and Phase 3 deliverables, folder structure, and Docker adoption section accordingly*  
-*Next update: After Phase 1 completion*
+*Last updated: September 2026 — v1.8: Phase 7 (AWS) decisions recorded — Terraform as IaC with local state, custom VPC without NAT Gateway, ARM64/Graviton images, non-root containers, 5 ECR repos (loader shares the ingestion image), PostgreSQL 16 to match local, ingestion refactored into per-task container entry points, and cost figures updated for the post-2025 Free Tier model*
