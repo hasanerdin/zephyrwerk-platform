@@ -71,6 +71,11 @@ data "aws_iam_policy_document" "ecs_task_ingestion" {
         actions = ["s3:GetObject", "s3:PutObject"]
         resources = ["${aws_s3_bucket.zephyrwerk_data_lake.arn}/raw/*"]
     }
+
+    statement {
+        actions = ["s3:ListBucket"]
+        resources = [aws_s3_bucket.zephyrwerk_data_lake.arn]
+    }
 }
 
 resource "aws_iam_role_policy" "ecs_task_ingestion" {

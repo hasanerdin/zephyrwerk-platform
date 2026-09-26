@@ -115,7 +115,7 @@ variable "ecs_cluster_name" {
 variable "image_tag" {
   description = "Tag for the Docker images"
   type        = string
-  default     = "71a3c94"
+  default     = "071e25e"
 }
 
 variable "smard_base_url" {
@@ -134,4 +134,36 @@ variable "openmeteo_history_url" {
   description = "Base URL for the Open-Meteo historical data API"
   type        = string
   default     = "https://archive-api.open-meteo.com/v1/archive"
+}
+
+variable "ingestion_tasks" {
+  description = "Map of ingestion tasks and their corresponding command line arguments"
+  type        = map(list(string))
+  default = {
+      smard = ["python", "-m", "ingestion", "--task", "smard"],
+      weather_forecast = ["python", "-m", "ingestion", "--task", "weather_forecast"],
+      weather = ["python", "-m", "ingestion", "--task", "weather"],
+      load = ["python", "-m", "ingestion", "--task", "load"]
+  }
+}
+
+variable "dbt_tasks" {
+  description = "List of dbt tasks to run"
+  type        = list(string)
+  default     = ["dbt seed --profiles-dir .", "dbt run --profiles-dir . ", "dbt test --profiles-dir ."]
+}
+
+variable "ml_tasks" {
+  description = "Map of ml tasks and their corresponding command line arguments"
+  type = map(list(string))
+  default = {
+    price = ["python", "-m", "ml.train_price_model"],
+    generation = ["python", "-m", "ml.train_generation_model"]
+  }
+}
+
+variable "dashboard_sg" {
+  description = "Security group for the dashboard"
+  type        = string
+  default     = "zephyrwerk-dashboard-sg"
 }
