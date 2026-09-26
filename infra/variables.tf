@@ -167,3 +167,39 @@ variable "dashboard_sg" {
   type        = string
   default     = "zephyrwerk-dashboard-sg"
 }
+
+variable "ecs_step_function_name" {
+  description = "Name of the ECS Step Function role"
+  type        = string
+  default     = "zephyrwerk-step-function-role"
+}
+
+variable "daily_state_machine_name" {
+  description = "Name of daily AWS state machine"
+  type = string
+  default = "zephyrwerk-daily-pipeline"
+}
+
+variable "weekly_state_machine_name"{
+  description = "Name of weekly AWS state machine"
+  type = string
+  default = "zephyrwerk-weekly-pipeline"
+}
+
+variable "scheduler_name" {
+  description = "Name of EventBridge Scheduler"
+  type = string
+  default = "zephyrwerk-scheduler"
+}
+
+variable "daily_schedule_name" {
+  description = "Name of daily schedule"
+  type = string
+  default = "zephyrwerk-daily-schedule"
+}
+
+variable "weekly_schedule_name" {
+  description = "Name of daily schedule"
+  type = string
+  default = "zephyrwerk-weekly-schedule"
+}

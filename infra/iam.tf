@@ -156,3 +156,92 @@ resource "aws_iam_role_policy" "ecs_task_ml" {
     role = aws_iam_role.ecs_task_ml.id
     policy = data.aws_iam_policy_document.ecs_task_ml.json
 }
+
+# ECS task role for Step Functions
+resource "aws_iam_role" "zephyrwerk_step_function_role"{
+    name = var.ecs_step_function_name
+
+    assume_role_policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Action = "sts:AssumeRole"
+                Effect = "Allow"
+                Principal = {
+                    Service = "states.amazonaws.com"
+                }
+            }
+        ]
+    })
+
+    tags = {
+        Name        = var.ecs_step_function_name
+        Environment = "dev"
+    }
+}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "step_function_policies" {
+    statement {
+        actions = ["ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks"]
+        resources = ["arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/zephyrwerk-*:*"]    
+    }
+    
+    statement {
+        actions = ["iam:PassRole"]
+        resources = [aws_iam_role.ecs_execution.arn, 
+                    aws_iam_role.ecs_task_ingestion.arn,
+                    aws_iam_role.ecs_task_api.arn,
+                    aws_iam_role.ecs_task_ml.arn
+                ]
+    }
+
+    statement {
+        actions = ["events:PutTargets", "events:PutRule", "events:DescribeRule"]
+        resources = ["arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/StepFunctionsGetEventsForECSTaskRule"]
+    }
+}
+
+resource "aws_iam_role_policy" "step_function_designer" {
+    name = "step-function-designer"
+    role   = aws_iam_role.zephyrwerk_step_function_role.id
+    policy = data.aws_iam_policy_document.step_function_policies.json
+}
+
+# ECS task role for Scheduler
+resource "aws_iam_role" "zephyrwerk_scheduler_role" {
+    name = var.scheduler_name
+
+    assume_role_policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Action = "sts:AssumeRole"
+                Effect = "Allow"
+                Principal = {
+                    Service = "scheduler.amazonaws.com"
+                }
+            }
+        ]
+    })
+
+    tags = {
+        Name = var.scheduler_name
+        Environment = "dev"
+    }
+}
+
+data "aws_iam_policy_document" "scheduler_policy" {
+    statement {
+        actions = ["states:StartExecution"]
+        resources = [aws_sfn_state_machine.zephyrwerk_daily_pipeline.arn,
+                    aws_sfn_state_machine.zephyrwerk_weekly_pipeline.arn]
+    }
+}
+
+resource "aws_iam_role_policy" "state_machine_scheduler" {
+    name = "start-state-machines"
+    role = aws_iam_role.zephyrwerk_scheduler_role.id
+    policy = data.aws_iam_policy_document.scheduler_policy.json
+}

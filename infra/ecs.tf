@@ -50,6 +50,7 @@ resource "aws_ecs_service" "dashboard" {
   task_definition       = aws_ecs_task_definition.zephyrwerk_dashboard_task.arn
   desired_count         = 1
   launch_type           = "FARGATE"
+  depends_on            = [aws_ecs_service.api]
 
   network_configuration {
     subnets         = aws_subnet.public[*].id
@@ -448,3 +449,4 @@ resource "aws_ecs_task_definition" "zephyrwerk_dashboard_task" {
     }
   ])
 }
+
