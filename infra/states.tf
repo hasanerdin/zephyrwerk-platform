@@ -36,7 +36,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_daily_pipeline" {
                                     Resource = "arn:aws:states:::ecs:runTask.sync",
                                     Parameters = {
                                         Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["smard"].arn
+                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["smard"].family
                                         LaunchType = "FARGATE"
                                         NetworkConfiguration = local.network_config
                                     },
@@ -54,7 +54,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_daily_pipeline" {
                                     Resource = "arn:aws:states:::ecs:runTask.sync",
                                     Parameters = {
                                         Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["weather"].arn
+                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["weather"].family
                                         LaunchType = "FARGATE"
                                         NetworkConfiguration = local.network_config
                                     },
@@ -72,7 +72,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_daily_pipeline" {
                                     Resource = "arn:aws:states:::ecs:runTask.sync",
                                     Parameters = {
                                         Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["weather_forecast"].arn
+                                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["weather_forecast"].family
                                         LaunchType = "FARGATE"
                                         NetworkConfiguration = local.network_config
                                     },
@@ -90,7 +90,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_daily_pipeline" {
                     Resource = "arn:aws:states:::ecs:runTask.sync",
                     Parameters = {
                         Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["load"].arn
+                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_ingestion_task["load"].family
                         LaunchType = "FARGATE"
                         NetworkConfiguration = local.network_config
                     },
@@ -103,7 +103,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_daily_pipeline" {
                     Resource = "arn:aws:states:::ecs:runTask.sync",
                     Parameters = {
                         Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_dbt_task.arn
+                        TaskDefinition = aws_ecs_task_definition.zephyrwerk_dbt_task.family
                         LaunchType = "FARGATE"
                         NetworkConfiguration = local.network_config
                     },
@@ -134,7 +134,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_weekly_pipeline" {
                                         Resource = "arn:aws:states:::ecs:runTask.sync",
                                         Parameters = {
                                             Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                                            TaskDefinition = aws_ecs_task_definition.zephyrwerk_ml_task["price"].arn
+                                            TaskDefinition = aws_ecs_task_definition.zephyrwerk_ml_task["price"].family
                                             LaunchType = "FARGATE"
                                             NetworkConfiguration = local.network_config
                                         },
@@ -152,7 +152,7 @@ resource "aws_sfn_state_machine" "zephyrwerk_weekly_pipeline" {
                                         Resource = "arn:aws:states:::ecs:runTask.sync",
                                         Parameters = {
                                             Cluster = aws_ecs_cluster.zephyrwerk_ecs.arn
-                                            TaskDefinition = aws_ecs_task_definition.zephyrwerk_ml_task["generation"].arn
+                                            TaskDefinition = aws_ecs_task_definition.zephyrwerk_ml_task["generation"].family
                                             LaunchType = "FARGATE"
                                             NetworkConfiguration = local.network_config
                                         },

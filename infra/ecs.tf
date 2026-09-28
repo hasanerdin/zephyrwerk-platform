@@ -129,6 +129,10 @@ resource "aws_ecs_task_definition" "zephyrwerk_init_db_task" {
       command = ["python", "-m", "ingestion", "--task", "init-db"]
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_task_definition" "zephyrwerk_ingestion_task" {
@@ -205,6 +209,10 @@ resource "aws_ecs_task_definition" "zephyrwerk_ingestion_task" {
       command = each.value
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_task_definition" "zephyrwerk_dbt_task" {
@@ -263,6 +271,10 @@ resource "aws_ecs_task_definition" "zephyrwerk_dbt_task" {
       command = ["/bin/sh", "-c", join(" && ", var.dbt_tasks)]
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_task_definition" "zephyrwerk_ml_task" {
@@ -327,6 +339,10 @@ resource "aws_ecs_task_definition" "zephyrwerk_ml_task" {
       command = each.value
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_task_definition" "zephyrwerk_api_task" {
@@ -404,6 +420,10 @@ resource "aws_ecs_task_definition" "zephyrwerk_api_task" {
       }
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_task_definition" "zephyrwerk_dashboard_task" {
@@ -457,5 +477,9 @@ resource "aws_ecs_task_definition" "zephyrwerk_dashboard_task" {
       }
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 

@@ -54,3 +54,73 @@ jobs:
           tags: ${{ steps.ecr.outputs.registry }}/zephyrwerk-${{ matrix.service }}:${{ steps.tag.outputs.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+  deploy:
+    name: Deploy to ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register new task definition revisions
+        run: |
+          SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY=$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com
+          
+          TARGETS=(
+            "zephyrwerk-init-db:ingestion"
+            "zephyrwerk-ingestion-smard:ingestion"
+            "zephyrwerk-ingestion-weather:ingestion"
+            "zephyrwerk-ingestion-weather_forecast:ingestion"
+            "zephyrwerk-ingestion-load:ingestion"
+            "zephyrwerk-dbt:dbt"
+            "zephyrwerk-ml-price:ml"
+            "zephyrwerk-ml-generation:ml"
+            "zephyrwerk-api:api"
+            "zephyrwerk-dashboard:dashboard"
+          )
+
+          # family → ECR deposu eşlemesi
+          for TARGET in "${TARGETS[@]}"; do
+            FAMILY="${TARGET%%:*}"
+            REPO="${TARGET##*:}"
+            echo "--- $FAMILY -> zephyrwerk-$REPO:$SHA"
+
+            aws ecs describe-task-definition --task-definition "$FAMILY" \
+              --query 'taskDefinition' --output json > current.json
+
+            jq --arg img "$REGISTRY/zephyrwerk-$REPO:$SHA" '
+              .containerDefinitions[0].image = $img
+              | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                    .compatibilities, .registeredAt, .registeredBy)
+            ' current.json > new.json
+
+            aws ecs register-task-definition --cli-input-json file://new.json \
+              --query 'taskDefinition.taskDefinitionArn' --output text
+
+          done <<'EOF'
+          zephyrwerk-init-db                 ingestion
+          zephyrwerk-ingestion-smard         ingestion
+          zephyrwerk-ingestion-weather       ingestion
+          zephyrwerk-ingestion-weather_forecast  ingestion
+          zephyrwerk-ingestion-load          ingestion
+          zephyrwerk-dbt                     dbt
+          zephyrwerk-ml-price                ml
+          zephyrwerk-ml-generation           ml
+          zephyrwerk-api                     api
+          zephyrwerk-dashboard               dashboard
+          EOF
+
+      - name: Update services
+        run: |
+          for SERVICE in zephyrwerk-api zephyrwerk-dashboard; do
+            aws ecs update-service \
+              --cluster zephyrwerk-cluster \
+              --service "$SERVICE" \
+              --task-definition "$SERVICE" \
+              --query 'service.taskDefinition' --output text
+          done
