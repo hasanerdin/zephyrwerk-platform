@@ -5,7 +5,7 @@ RUN useradd --create-home appuser
 WORKDIR /app
 
 # Install dbt
-RUN pip install --no-cache-dir dbt-core==1.11.11 dbt-postgres==1.10.1
+RUN pip install --no-cache-dir --timeout 60 --retries 10 dbt-core==1.11.11 dbt-postgres==1.10.1
 
 # Copy dbt project
 COPY dbt/ ./dbt/
