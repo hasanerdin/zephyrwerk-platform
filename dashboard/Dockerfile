@@ -8,7 +8,7 @@ WORKDIR /app
 # dependency list carries ml/api/ingestion-only packages (xgboost, boto3,
 # sqlalchemy, ...) that this image has no use for.
 COPY dashboard/requirements.txt ./dashboard/requirements.txt
-RUN pip install --no-cache-dir -r dashboard/requirements.txt
+RUN pip install --no-cache-dir --timeout 60 --retries 10 -r dashboard/requirements.txt
 
 # Copy application source
 COPY dashboard/ ./dashboard/
