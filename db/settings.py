@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class DatabaseSettings(BaseSettings):
     ZEPHYRWERK_RDS_HOST: str
     ZEPHYRWERK_RDS_PORT: int = 5432

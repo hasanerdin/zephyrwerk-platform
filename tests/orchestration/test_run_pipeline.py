@@ -9,7 +9,6 @@ import pytest
 
 import orchestration.run_pipeline as run_pipeline
 
-
 # ── module import must not trigger pipeline runs ────────────────────────────
 
 # Regression guard for a bug where a bare `run_daily_pipeline()` call sat at
