@@ -145,6 +145,11 @@ def fetch_forecast_weather(start_date: datetime, end_date: datetime) -> pd.DataF
     return pd.concat(results) if results else pd.DataFrame()
 
 if __name__ == "__main__":
+    logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler()],
+        )
     start = datetime.now(timezone.utc) - timedelta(days=10)
     end = datetime.now(timezone.utc)
     df = fetch_historical_weather(start, end)

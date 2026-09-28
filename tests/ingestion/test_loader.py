@@ -110,11 +110,14 @@ class TestLoadWeatherForecastDay:
             with pytest.raises(KeyError):
                 loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
 
-    def test_rolls_back_and_does_not_raise_on_insert_failure(self):
+    def test_rolls_back_and_reraises_on_insert_failure(self):
+        # _insert_rows now re-raises after rollback so failures propagate up to
+        # load_from_s3_to_db, which is what makes the container exit non-zero.
         conn = MagicMock()
         with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()), \
              patch("ingestion.loader.execute_values", side_effect=RuntimeError("db down")):
-            loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
+            with pytest.raises(RuntimeError, match="db down"):
+                loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
         conn.rollback.assert_called_once()
         conn.commit.assert_not_called()
 
@@ -126,7 +129,7 @@ class TestLoadFromS3ToDb:
         date = datetime(2024, 1, 15, tzinfo=timezone.utc)
         conn = MagicMock()
         fs = MagicMock()
-        with patch("ingestion.loader._get_db_connection", return_value=conn), \
+        with patch("ingestion.loader.get_db_connection", return_value=conn), \
              patch("ingestion.loader._get_filesystem", return_value=fs), \
              patch("ingestion.loader._load_smard_day") as mock_smard, \
              patch("ingestion.loader._load_weather_day") as mock_weather, \
@@ -143,7 +146,7 @@ class TestLoadFromS3ToDb:
     def test_closes_connection_even_if_a_loader_raises(self):
         date = datetime(2024, 1, 15, tzinfo=timezone.utc)
         conn = MagicMock()
-        with patch("ingestion.loader._get_db_connection", return_value=conn), \
+        with patch("ingestion.loader.get_db_connection", return_value=conn), \
              patch("ingestion.loader._get_filesystem", return_value=MagicMock()), \
              patch("ingestion.loader._load_smard_day", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError):

@@ -42,13 +42,14 @@ localstack-up:
 # was invoked from.
 postgres-up:
 	docker run -d \
-		--name zephyrwerk-postgres \
-		-p 5432:5432 \
-		-e POSTGRES_USER=postgres \
-		-e POSTGRES_PASSWORD=postgres \
-		-e POSTGRES_DB=zephyrwerk \
-		-v "$(CURDIR)/db/init.sql:/docker-entrypoint-initdb.d/init.sql" \
-		postgres:16
+        --name zephyrwerk-postgres \
+        -p 5432:5432 \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=postgres \
+        -e POSTGRES_DB=zephyrwerk \
+        -v "$(CURDIR)/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql" \
+        -v "$(CURDIR)/db/init_local_role.sql:/docker-entrypoint-initdb.d/02_local_role.sql" \
+        postgres:16
 
 infra-up: localstack-up postgres-up
 

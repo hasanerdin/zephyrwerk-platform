@@ -314,6 +314,12 @@ MONITORING:   AWS CloudWatch (logs + cost alerts)
 | Containerization | **Docker** (per-service Dockerfiles) | Local dev parity. Images pushed to ECR for production. Docker Compose used only in Phases 6 (local) and removed in Phase 7 — see Section 16. |
 | CI/CD | **GitHub Actions → ECR → ECS** | Industry standard. Free for public repos. |
 | Monitoring | **AWS CloudWatch** | Native AWS. Free tier covers logs and basic metrics. |
+| Infrastructure as Code | **Terraform** | Provider-agnostic, dominant in German job market. State kept locally (single-developer project); `*.tfstate` gitignored. |
+| Network | **Custom VPC** — 2 public + 2 private subnets across 2 AZs, no NAT Gateway | Containers run in public subnets protected by security groups; RDS stays private. NAT Gateway (~$38/month) is not justified for a short-lived learning deployment. In production, containers would sit in private subnets behind NAT. |
+| CPU architecture | **ARM64 (Fargate Graviton)** | Matches the Apple Silicon dev machine, so images build natively without emulation, and ARM Fargate is ~20% cheaper than x86. |
+| Container security | **Non-root `USER` in every image** | Limits what an attacker can do inside a compromised container. |
+| Service discovery | **ECS Service Connect** | Gives the API a stable DNS name (`http://api:8000`) inside the cluster, mirroring Compose's service-name DNS locally. Free. |
+| Public access | **Direct public IPs on ECS tasks**, no load balancer | An ALB costs ~$18–20/month — more than the rest of the deployment combined. Trade-off: no HTTPS, no fixed address (the IP changes when a task restarts). In production this would be an ALB with an ACM certificate. |
 
 ### Explicitly Rejected Alternatives
 
@@ -325,6 +331,10 @@ MONITORING:   AWS CloudWatch (logs + cost alerts)
 | Apache Airflow | MWAA costs ~$300/month. Docker Compose Airflow is heavy for local dev. Simple Python orchestration is sufficient. |
 | AWS Athena / Glue | Adds complexity without proportional benefit at this scale. RDS PostgreSQL is simpler and faster. |
 | AWS MWAA | Too expensive for a portfolio project. |
+| AWS IAM Identity Center | Requires AWS Organizations, which immediately voids Free Tier credits on a new account. A single IAM user with MFA is used instead. |
+| terraform-aws-modules/vpc | Hides exactly the concepts this phase exists to learn (route tables, gateways, subnet associations). Resources written explicitly instead. |
+| Application Load Balancer | Cost. See "Public access" above — revisit if the dashboard ever needs HTTPS or a stable URL. |
+| RDS-managed master password rotation | Rotates the secret every 7 days by default; the long-running API container would keep the stale password and lose database access. The secret is created by Terraform instead. |
 
 ---
 
@@ -340,19 +350,17 @@ Rationale: German source data, German target employers, lowest latency for the u
 
 Resources follow the pattern `zephyrwerk-{resource-type}` with an optional `-{qualifier}` (e.g. environment) where it adds clarity. Note: the S3 bucket name must be **globally unique across all AWS accounts**, so it carries a region suffix (see note below).
 
-> ⚠️ **NOTE (verify in Phase 7):** `zephyrwerk-data-lake` is a generic name and may already be taken globally. Plan to use a unique suffix such as `zephyrwerk-data-lake-eucentral1` or a short random suffix. Once chosen, the final bucket name must be updated consistently everywhere in this document and in all `.env` files.
+✅ RESOLVED (Phase 7): zephyrwerk-data-lake was available globally; no suffix was needed. The name is final.
 
 | Resource | Name | Notes |
 |---|---|---|
-| S3 Bucket | `zephyrwerk-data-lake` *(may need unique suffix — see note)* | Single bucket, prefixes separate layers |
-| RDS Instance | `zephyrwerk-rds-prod` | PostgreSQL 15, `db.t3.micro` (free tier) |
-| ECS Cluster | `zephyrwerk-cluster` | Fargate launch type |
+| S3 Bucket | `zephyrwerk-data-lake` | Single bucket, prefixes separate layers |
+| RDS Instance | `zephyrwerk-rds-prod` | PostgreSQL 16 (16 to match the local Docker image — cloud parity requires identical major versions.), `db.t3.micro`|
 | ECS Service (API) | `zephyrwerk-api-service` | FastAPI container |
 | ECS Service (Dashboard) | `zephyrwerk-dashboard-service` | Streamlit container |
 | ECR Repo (API) | `zephyrwerk-api` | Docker image registry |
 | ECR Repo (Dashboard) | `zephyrwerk-dashboard` | Docker image registry |
-| ECR Repo (Ingestion) | `zephyrwerk-ingestion` | Docker image registry |
-| ECR Repo (Loader) | `zephyrwerk-loader` | Docker image registry |
+| ECR Repo (Ingestion) | zephyrwerk-ingestion | Docker image registry — also runs the loader task (same image, different command) |
 | ECR Repo (dbt) | `zephyrwerk-dbt` | Docker image registry |
 | ECR Repo (ML) | `zephyrwerk-ml` | Docker image registry |
 | Step Functions | `zephyrwerk-daily-pipeline` | State machine for daily run |
@@ -360,6 +368,10 @@ Resources follow the pattern `zephyrwerk-{resource-type}` with an optional `-{qu
 | IAM Role (ECS) | `zephyrwerk-ecs-task-role` | Least-privilege S3 + RDS access |
 | Secrets (RDS creds) | `zephyrwerk/rds/credentials` | AWS Secrets Manager (see Section 8.1) |
 | CloudWatch Log Group | `/zephyrwerk/pipeline` | All ECS Task logs |
+| ECS Cluster | `zephyrwerk-cluster` | Fargate, ARM64, Service Connect namespace `zephyrwerk` |
+| Task definitions (standalone) | `zephyrwerk-ingestion-{smard,weather,weather_forecast,load}, zephyrwerk-init-db, zephyrwerk-dbt, zephyrwerk-ml-{price,generation}` | Run once and exit |
+| Services (long-running) | `zephyrwerk-api`, `zephyrwerk-dashboard` | desired_count = 1, public IP, no ALB |
+| Security groups | `zephyrwerk-{pipeline,api,rds,dashboard}-sg` | Dashboard open to 0.0.0.0/0 on 8501; API reachable only from the dashboard SG on 8000; RDS only from pipeline + API SGs on 5432 |
 
 ### 8.1 Secrets Management
 
@@ -368,9 +380,11 @@ Database passwords and any sensitive credentials are **never** stored as plain e
 | Environment | Secret handling |
 |---|---|
 | Local development | `.env` file (gitignored) — acceptable for local-only fake/dev credentials |
-| Production (AWS) | **AWS Secrets Manager** (or SSM Parameter Store) — ECS task pulls secrets at runtime via the task role |
+| Production (AWS) | **AWS Secrets Manager** — ECS injects the secret into the container as an environment variable at task start, using the execution role |
 
-The RDS connection password is stored in Secrets Manager under `zephyrwerk/rds/credentials`. The ECS task role is granted read access to that specific secret only (least privilege). Non-sensitive config (bucket name, region, endpoints) can remain as plain env vars.
+The RDS connection password is generated by Terraform (`random_password`), stored in Secrets Manager under `zephyrwerk/rds/credentials` as JSON, and read by the **execution role** — not the task role — which is granted `secretsmanager:GetSecretValue` on that one secret ARN only. ECS resolves it before the container starts and passes it in as `ZEPHYRWERK_RDS_PASSWORD`, so the application reads it exactly as it does locally and contains no Secrets Manager code at all. The alternative — having the task role fetch the secret at runtime — would require an AWS-specific code path in the application and break local/cloud parity. Non-sensitive config (bucket name, region, endpoints) remains as plain env vars.
+
+RDS's own managed password rotation (`manage_master_user_password`) is deliberately not used: it rotates the secret on a schedule, and the long-running API container would keep the stale password and silently lose database access within days.
 
 ### S3 Bucket Structure
 
@@ -759,12 +773,13 @@ New skills: Streamlit multipage architecture, Plotly time-series visualizations
 Deliverables:
 - S3 bucket provisioned with correct structure and IAM policies
 - RDS PostgreSQL instance provisioned
-- ECR repositories for all 4 Docker images
+- ECR repositories for all 5 Docker images (api, dashboard, ingestion, dbt, ml)
 - ECS Fargate cluster with API and Dashboard services
 - Step Functions state machine for daily pipeline
 - EventBridge rule: daily trigger at 06:00 UTC
 - IAM roles with least-privilege policies
 - CloudWatch log groups + budget alert ($20/month threshold)
+- VPC, subnets, route tables and security groups provisioned via Terraform
 - GitHub Actions:
   - On PR: pytest + dbt tests
   - On merge to main: build → ECR push → ECS deploy
@@ -778,10 +793,14 @@ New skills: ECS Fargate, ECR, Step Functions, EventBridge, IAM, CloudWatch, full
 ## 14. Cost Management
 
 ### Free Tier Coverage
+NOTE: The 12-month Free Tier no longer applies to accounts created after July 2025. 
+New accounts get $100 in credits at sign-up plus up to $100 more for completing onboarding activities, 
+valid for 6 months or until the credits run out. This deployment runs on credits, not on a perpetual free tier.
+
 | Service | Free Tier | Expected Usage |
 |---|---|---|
 | S3 | 5GB storage, 20k GET, 2k PUT/month | Well within free tier |
-| RDS PostgreSQL | 750hrs `db.t3.micro`/month (12 months) | Single instance, covered |
+| RDS PostgreSQL | No free tier for new accounts | ~$0.50/day for db.t3.micro in eu-central-1 |
 | ECS Fargate | No free tier | Main cost driver |
 | ECR | 500MB/month | Covered |
 | CloudWatch | 10 custom metrics, 5GB logs | Covered |
@@ -798,11 +817,13 @@ New skills: ECS Fargate, ECR, Step Functions, EventBridge, IAM, CloudWatch, full
 ### Estimated Monthly Cost (Production)
 | Resource | Estimated Cost |
 |---|---|
-| RDS `db.t3.micro` | ~$15/month (after free tier year) |
+| RDS `db.t3.micro` | ~$15/month |
 | ECS Fargate (API + Dashboard, 24/7) | ~$15–25/month |
 | ECS Tasks (ingestion + dbt + ML, daily) | ~$2–5/month with Spot |
 | S3 storage | < $1/month |
-| **Total** | **~$30–45/month** |
+| Public IPv4 addresses (API + Dashboard, 24/7) | ~$7/month |
+| Secrets Manager (1 secret) | ~$0.40/month |
+| **Total** | **~$40–55/month** |
 
 ---
 
@@ -936,6 +957,21 @@ Never move to the next phase until the current one meets all five criteria.
 
 ---
 
+### Cloud-Only Setup Steps
+
+Two steps are invisible locally because a tool performs them automatically, and both had to be made explicit when moving to AWS:
+
+| Step | Local | AWS |
+|---|---|---|
+| Schema creation (`db/init.sql`) | The Postgres image runs everything in `/docker-entrypoint-initdb.d` on first start | `zephyrwerk-init-db` ECS task applies the same file via `db/init_db.py` |
+| dbt seed (`german_public_holidays`) | One-off `make dbt-seed`, then forgotten | Part of the dbt task's command: `dbt seed && dbt run && dbt test` |
+
+Both were discovered the same way: the cloud run failed with `relation ... does not exist`. The lesson generalises — when moving a working local stack to the cloud, the application code ports cleanly; what breaks are the one-time setup steps that a local tool had been doing silently. Anything a local container, a Makefile target run months ago, or a developer's shell history performs once is invisible until it is missing.
+
+`db/init.sql` was also split for this move: role creation and its hard-coded local password now live in `db/init_local_role.sql`, which only the local Postgres container mounts. RDS has a single managed user, and a committed plaintext password must never reach a real database.
+
+---
+
 ```
 zephyrwerk-platform/
 │
@@ -945,10 +981,21 @@ zephyrwerk-platform/
 │   ├── weather_client.py        # Open-Meteo API client (historical + forecast)
 │   ├── s3_uploader.py           # writes Parquet to S3 raw layer
 │   ├── loader.py                # reads Parquet from S3, bulk inserts into PostgreSQL raw schema
+│   ├── tasks.py                 # fetch-and-upload tasks (moved out of run_pipeline.py)
+│   ├── __main__.py              # container entry point: python -m ingestion --task {smard|weather|weather_forecast|load}
 │   └── Dockerfile               # covers ingestion + loader (same container)
 │
+├── db/
+│   ├── connection.py
+│   ├── database.py
+│   ├── deps.py
+│   ├── init_db.py
+│   ├── init_local_role.sql
+│   ├── init.sql
+│   └── settings.py
+│
 ├── orchestration/
-│   └── run_pipeline.py          # Local: ingestion → loader → dbt run → (optionally ML)
+│   └── run_pipeline.py          # Local only — thin wrapper calling ingestion/ml functions in order. Replaced by Step Functions in AWS.
 │
 ├── dbt/
 │   ├── dbt_project.yml
@@ -1000,6 +1047,17 @@ zephyrwerk-platform/
 │   ├── api_client.py            # cached FastAPI client
 │   └── Dockerfile
 │
+├── infra/                       # Terraform (IaC)
+│   ├── main.tf                  # providers, S3 data lake
+│   ├── network.tf               # VPC, subnets, IGW, route tables
+│   ├── security_groups.tf       # pipeline / api / rds security groups
+│   ├── ecr.tf                   # 5 image repositories + lifecycle policies
+│   ├── rds.tf                   # subnet group, secret, PostgreSQL instance
+│   ├── variables.tf
+│   └── outputs.tf
+│   └── iam.tf
+│   └── ecs.tf
+│
 ├── notebooks/
 │   └── eda/
 │       ├── 01_energy_mix_history.ipynb
@@ -1029,5 +1087,4 @@ zephyrwerk-platform/
 ---
 
 *Document maintained by: Hasan Erdin*  
-*Last updated: May 2026 — v1.7: Fixed architectural gap — added loader.py (S3 Parquet → PostgreSQL raw schema) as the missing ELT load step; updated architecture diagram, daily pipeline flow (now 5 steps), ECR repos, RDS schema (now 3 layers: raw/staging/analytics), Phase 1 and Phase 3 deliverables, folder structure, and Docker adoption section accordingly*  
-*Next update: After Phase 1 completion*
+*Last updated: September 2026 — v1.9: Phase 7 (AWS) decisions recorded — Terraform as IaC with local state, custom VPC without NAT Gateway, ARM64/Graviton images, non-root containers, 5 ECR repos (loader shares the ingestion image), PostgreSQL 16 to match local, ingestion refactored into per-task container entry points, and cost figures updated for the post-2025 Free Tier model*

@@ -1,9 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db.settings import get_settings
+from db.settings import get_db_settings
 
-settings = get_settings()
+settings = get_db_settings()
 engine = create_engine(
     settings.database_url,
     echo=False,         # Disable SQLAlchemy logging for cleaner output

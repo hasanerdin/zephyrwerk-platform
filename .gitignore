@@ -34,9 +34,13 @@ dbt/.user.yml
 # ML artifacts — live in S3, not Git
 *.pkl
 *.joblib
+ml/artifacts
 
 # AWS
 .aws/
+*.tfstate
+*.tfstate.backup
+.terraform/
 
 # Docker override (local tweaks, never committed)
 docker-compose.override.yml
