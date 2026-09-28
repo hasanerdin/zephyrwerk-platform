@@ -8,7 +8,7 @@ Built as a portfolio project demonstrating end-to-end data platform engineering:
 
 ## Architecture
 
-**Stack:** Python · dbt Core · PostgreSQL · FastAPI · Streamlit · XGBoost · AWS (S3, RDS, ECS Fargate, Step Functions, EventBridge) · Docker · GitHub Actions
+**Stack:** Python · dbt Core · PostgreSQL · FastAPI · Streamlit · XGBoost · Terraform · AWS (S3, RDS, ECR, ECS Fargate, Secrets Manager, CloudWatch, Step Functions, EventBridge) · Docker · GitHub Actions
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -71,6 +71,7 @@ Built as a portfolio project demonstrating end-to-end data platform engineering:
 │    wind_forecast/     │     │  OpenAPI docs auto-generated       │
 │    solar_forecast/    │     └──────────────────┬─────────────────┘
 └──────────────────────┘                        ▼
+                                   (ECS Service Connect: http://api:8000)
                               ┌──────────────────────────────────┐
                               │  Streamlit — AWS ECS Fargate     │
                               │  Historical Overview             │
@@ -78,9 +79,10 @@ Built as a portfolio project demonstrating end-to-end data platform engineering:
                               │  Forecast Viewer                 │
                               └──────────────────────────────────┘
 
-CI/CD:         GitHub Actions → Docker build → ECR push → ECS deploy
-Orchestration: EventBridge → Step Functions → ECS Tasks (daily 06:00 UTC)
-Monitoring:    AWS CloudWatch (logs + cost alerts)
+Infrastructure: Terraform (infra/) — VPC, RDS, S3, ECR, IAM, ECS
+CI/CD:          GitHub Actions → Docker build → ECR push → ECS deploy
+Orchestration:  EventBridge → Step Functions → ECS Tasks (daily 06:00 UTC)
+Monitoring:     AWS CloudWatch (logs + cost alerts)
 ```
 
 **Three-schema design.** `loader.py` is the bridge between the S3 data lake and PostgreSQL — dbt does not read from S3 directly. The `raw` schema mirrors S3 Parquet and is fully reloadable. `staging` is dbt views (no storage cost, always fresh). `analytics` is dbt tables (pre-computed for query performance). The five historical fact tables share hourly grain and identical row counts (65,208 hours over the 2019–2026 window); `fct_weather_forecast_features` is intentionally separate — it holds only the rolling day-ahead forecast horizon, kept structurally isolated from training data so the ML models never see forecast values during training.
@@ -99,7 +101,7 @@ Monitoring:    AWS CloudWatch (logs + cost alerts)
 | 4 — ML | XGBoost price + generation (wind/solar) forecasting, model registry | ✅ Complete · `v0.4.0` |
 | 5 — API | FastAPI service, all endpoints, day-ahead prediction pipeline, pytest suite | ✅ Complete · `v0.5.0` |
 | 6 — Dashboard | Streamlit multipage dashboard, Docker Compose | ✅ Complete · `v0.6.0` |
-| 7 — AWS | Full cloud deployment, CI/CD, v1.0.0 release | 🔜 Not started |
+| 7 — AWS | Terraform infrastructure, ECS Fargate deployment, orchestration, CI/CD | 🚧 In progress |
 
 ---
 
@@ -161,6 +163,148 @@ The hardest part of this phase was serving day-ahead predictions correctly: the 
 
 ---
 
+## AWS Deployment (Phase 7)
+
+The whole platform runs on AWS in `eu-central-1` (Frankfurt), provisioned with Terraform. Nothing about the application code changes between local and cloud — only environment variables.
+
+### Infrastructure
+
+All infrastructure lives in `infra/` as Terraform, with state kept locally (single-developer project; `*.tfstate` is gitignored because it stores the generated database password in plain text).
+
+| File | Contents |
+|---|---|
+| `main.tf` | Providers, default tags, S3 data lake |
+| `network.tf` | VPC (10.0.0.0/16), 2 public + 2 private subnets across 2 AZs, internet gateway, route tables |
+| `security_groups.tf` | Pipeline, API, RDS and dashboard security groups |
+| `rds.tf` | DB subnet group, generated password, Secrets Manager entry, PostgreSQL 16 instance |
+| `ecr.tf` | 5 image repositories with immutable tags, scan-on-push, and lifecycle policies |
+| `iam.tf` | One execution role, three least-privilege task roles, CloudWatch log group |
+| `ecs.tf` | Cluster, Service Connect namespace, 8 task definitions, 2 services |
+
+```bash
+cd infra
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
+### Design decisions
+
+**No NAT Gateway.** Containers run in public subnets with public IPs and are protected by security groups; only RDS sits in the private subnets. A NAT Gateway costs ~$38/month, which is more than the rest of this deployment combined. In production, containers would run in private subnets behind NAT — the trade-off here is deliberate and cost-driven.
+
+**No load balancer.** The dashboard is reached directly at `http://<task-public-ip>:8501`. An ALB would add ~$18–20/month and is what production would use (fixed hostname, HTTPS via ACM). The consequence: the address changes whenever the task restarts, and traffic is plain HTTP.
+
+**ARM64 / Graviton.** Images are built natively on Apple Silicon and run on ARM Fargate — no emulation during build, and ~20% cheaper compute.
+
+**Least-privilege IAM.** The execution role pulls images, reads the RDS secret and writes logs. Task roles are split by job: ingestion/loader can read and write `raw/*`, ML can read and write `models/*`, the API can only read `models/*`. dbt and the dashboard get no task role at all — dbt only talks to Postgres, the dashboard only to the API.
+
+**Secrets.** The database password is generated by Terraform, stored in Secrets Manager as `zephyrwerk/rds/credentials`, and injected by ECS into the container as `ZEPHYRWERK_RDS_PASSWORD`. No application code knows Secrets Manager exists.
+
+**Service Connect.** The API registers itself as `api` in the cluster namespace, so the dashboard reaches it at `http://api:8000` — the same address shape Docker Compose provides locally, and stable across task restarts.
+
+**Non-root containers.** Every image creates an `appuser` and switches to it before `CMD`, so application code is readable but not writable from inside a running container.
+
+### Images
+
+Five images, one per component; the loader and the ingestion tasks share the `ingestion` image and differ only in the command they run. Tags are the short git commit hash, and ECR repositories are immutable, so a tag always refers to exactly one build.
+
+```bash
+SHA=$(git rev-parse --short HEAD)
+REGISTRY=<account-id>.dkr.ecr.eu-central-1.amazonaws.com
+
+aws ecr get-login-password --profile zephyrwerk --region eu-central-1 \
+  | docker login --username AWS --password-stdin $REGISTRY
+
+for name in api dashboard ingestion dbt ml; do
+  docker build --platform linux/arm64 --provenance=false \
+    -t $REGISTRY/zephyrwerk-$name:$SHA -f $name/Dockerfile .
+  docker push $REGISTRY/zephyrwerk-$name:$SHA
+done
+```
+
+Then set `image_tag` in `infra/variables.tf` to the new hash and re-apply.
+
+### Container entry points
+
+Each ECS task runs exactly one unit of work, defined by the `command` in its task definition:
+
+| Task definition | Image | Command |
+|---|---|---|
+| `zephyrwerk-init-db` | ingestion | `python -m ingestion --task init-db` |
+| `zephyrwerk-ingestion-smard` | ingestion | `python -m ingestion --task smard` |
+| `zephyrwerk-ingestion-weather` | ingestion | `python -m ingestion --task weather` |
+| `zephyrwerk-ingestion-weather_forecast` | ingestion | `python -m ingestion --task weather_forecast` |
+| `zephyrwerk-ingestion-load` | ingestion | `python -m ingestion --task load` |
+| `zephyrwerk-dbt` | dbt | `dbt seed && dbt run && dbt test` |
+| `zephyrwerk-ml-price` | ml | `python -m ml.train_price_model` |
+| `zephyrwerk-ml-generation` | ml | `python -m ml.train_generation_model` |
+
+With no dates passed, every ingestion task uses its own daily window (yesterday for SMARD/weather, the next 8 days for the forecast). Dates are only passed explicitly for backfills.
+
+### Running a task manually
+
+```bash
+aws ecs run-task \
+  --cluster zephyrwerk-cluster \
+  --task-definition zephyrwerk-ingestion-load \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[SUBNET_1,SUBNET_2],securityGroups=[PIPELINE_SG],assignPublicIp=ENABLED}" \
+  --profile zephyrwerk --region eu-central-1
+```
+
+For a one-off backfill, override the command instead of changing the task definition:
+
+```bash
+  --overrides '{"containerOverrides":[{"name":"ingestion-load","command":["python","-m","ingestion","--task","load","--start_date","2019-01-01","--end_date","2026-09-23"]}]}'
+```
+
+All logs go to the `/zephyrwerk/pipeline` CloudWatch log group, one stream prefix per task:
+
+```bash
+aws logs tail /zephyrwerk/pipeline --follow --since 10m --profile zephyrwerk --region eu-central-1
+```
+
+### One-time setup in a fresh environment
+
+Two steps happen automatically on a local machine and therefore have to be made explicit in the cloud:
+
+1. **Schema creation.** Locally the Postgres container applies `db/init.sql` via `docker-entrypoint-initdb.d`. On RDS, run the `zephyrwerk-init-db` task once. It applies the same file, and every statement uses `IF NOT EXISTS`, so re-running is safe.
+2. **dbt seed.** `dim_date` joins against the `german_public_holidays` seed. Locally this is `make dbt-seed`; in AWS `dbt seed` is part of the dbt task's command so it can never be forgotten.
+
+Then run, in order: `zephyrwerk-ingestion-smard` → `weather` → `weather_forecast` → `load` → `zephyrwerk-dbt` → the two ML tasks.
+
+### Long-running services
+
+`zephyrwerk-api` and `zephyrwerk-dashboard` run as ECS services with `desired_count = 1`; ECS restarts them if the container-level health check fails. To find the dashboard's current address:
+
+```bash
+TASK=$(aws ecs list-tasks --cluster zephyrwerk-cluster --service-name zephyrwerk-dashboard \
+  --query 'taskArns[0]' --output text --profile zephyrwerk --region eu-central-1)
+
+ENI=$(aws ecs describe-tasks --cluster zephyrwerk-cluster --tasks $TASK \
+  --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+  --output text --profile zephyrwerk --region eu-central-1)
+
+aws ec2 describe-network-interfaces --network-interface-ids $ENI \
+  --query 'NetworkInterfaces[0].Association.PublicIp' --output text \
+  --profile zephyrwerk --region eu-central-1
+```
+
+### Cost
+
+Running total is roughly $1.25/day: two Fargate services (~$0.50), two public IPv4 addresses (~$0.25), RDS `db.t3.micro` + 20 GB gp3 (~$0.58), plus a few cents for S3, ECR and Secrets Manager. VPC, subnets, gateways, security groups, IAM and task definitions are free.
+
+To pause without destroying anything, scale both services to zero:
+
+```bash
+aws ecs update-service --cluster zephyrwerk-cluster --service zephyrwerk-api --desired-count 0 --profile zephyrwerk --region eu-central-1
+aws ecs update-service --cluster zephyrwerk-cluster --service zephyrwerk-dashboard --desired-count 0 --profile zephyrwerk --region eu-central-1
+```
+
+To tear everything down: `terraform destroy`. `force_delete` on the ECR repositories and `skip_final_snapshot` on RDS are set specifically so that this completes without manual cleanup — both would be the opposite in production. Afterwards, search the console for resources tagged `Project = zephyrwerk` to confirm nothing was left behind.
+
+---
+
 ## Local Setup
 
 ### Prerequisites
@@ -168,6 +312,7 @@ The hardest part of this phase was serving day-ahead predictions correctly: the 
 - **Python 3.12** managed via [`uv`](https://docs.astral.sh/uv/) — pinned to 3.12 because `dbt-core`'s `mashumaro` dependency fails on 3.14
 - **Docker** — runs LocalStack (S3 emulator) and PostgreSQL locally
 - **Make** — the commands below are `make` targets (see the `Makefile`); run `make help` for the full list
+- **Terraform** and the **AWS CLI v2** — only needed for the cloud deployment (see above)
 
 ### Install
 
@@ -197,6 +342,8 @@ Key variables:
 | `ZEPHYRWERK_RDS_DB` | `zephyrwerk` | Database name |
 | `ZEPHYRWERK_RDS_USER` | `zephyrwerk` | App-level DB role — not the container's superuser, see below |
 
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are only meaningful locally, where LocalStack accepts any value. In AWS they are absent on purpose: credentials come from the ECS task role, and setting them would override it.
+
 ### Start local infrastructure
 
 ```bash
@@ -206,15 +353,15 @@ make infra-up
 Starts LocalStack (S3 emulation, pinned to 3.8 — LocalStack 2026.x
 requires a paid license for S3) and PostgreSQL, waits for LocalStack to
 report healthy, and creates the `zephyrwerk-data-lake` bucket.
-PostgreSQL's container mounts `db/init.sql`, which creates the raw,
-staging, analytics schemas, all five raw tables (including
-`weather_forecast`), and the `zephyrwerk` app role. Run `make
-localstack-up` / `make postgres-up` individually if you only need one;
-see the `Makefile` for the underlying `docker run` commands.
+PostgreSQL's container mounts two SQL files from `db/`: `init.sql`
+creates the raw, staging and analytics schemas plus all five raw
+tables, and `init_local_role.sql` creates the local `zephyrwerk` app
+role. The role file is deliberately separate — it is local-only
+(RDS has a single managed user) and contains a throwaway password that
+must never run against a real database.
 
-> If Postgres already existed before `weather_forecast` or the
-> `zephyrwerk` role were added to `init.sql`, the mounted script only
-> runs on first container init. Apply it manually instead:
+> If Postgres already existed before either file changed, the mounted
+> scripts only run on first container init. Apply them manually instead:
 > `docker exec -i zephyrwerk-postgres psql -U postgres -d zephyrwerk < db/init.sql`
 > — safe to re-run, every statement either uses `IF NOT EXISTS` or
 > checks first. The bucket creation in `make localstack-up` is also
@@ -227,27 +374,35 @@ make dbt-deps
 make dbt-seed
 ```
 
-Do this before the first pipeline run, not after. `run_pipeline.py`'s
-`run_dbt()` runs `dbt run`/`dbt test` automatically after every
-`--mode daily` and `--mode historical` ingestion (see
-`run_daily_pipeline()` / `run_historical_pipeline()`) — and that `dbt
-run` fails immediately if `dbt_utils` isn't installed or the German
-public holidays seed hasn't been loaded yet (`dim_date` joins against
-it). `--mode weekly` skips dbt entirely — it only retrains models from
-data already in `fct_ml_features`.
+Do this before the first pipeline run, not after. `dbt run` fails
+immediately if `dbt_utils` isn't installed or the German public
+holidays seed hasn't been loaded yet (`dim_date` joins against it).
 
 Both targets wrap `dotenv run -- dbt ... --project-dir dbt
---profiles-dir dbt`: unlike `run_pipeline.py`, the `dbt` CLI doesn't
-read `.env` on its own — `dbt/profiles.yml` pulls credentials via
-`env_var(...)`, which only sees real OS environment variables — so
-`dotenv run --` (from `python-dotenv`, already a project dependency)
-loads `.env` for that one command. Going through `make` also means it
-works regardless of your shell's current directory.
+--profiles-dir dbt`: the `dbt` CLI doesn't read `.env` on its own —
+`dbt/profiles.yml` pulls credentials via `env_var(...)`, which only
+sees real OS environment variables — so `dotenv run --` (from
+`python-dotenv`, already a project dependency) loads `.env` for that
+one command. Going through `make` also means it works regardless of
+your shell's current directory.
 
 > To iterate on dbt models directly without re-running ingestion, use
 > `make dbt-run` / `make dbt-test`.
 
 ### Run the ingestion pipeline
+
+Individual tasks, the same units of work that run as separate ECS tasks in AWS:
+
+```bash
+python -m ingestion --task smard                                    # yesterday
+python -m ingestion --task weather
+python -m ingestion --task weather_forecast                         # next 8 days
+python -m ingestion --task load                                     # S3 → Postgres
+python -m ingestion --task smard --start_date 2019-01-01 --end_date 2025-12-31   # backfill
+python -m ingestion --task init-db                                  # apply db/init.sql
+```
+
+Or the whole sequence at once via the local orchestrator:
 
 ```bash
 make pipeline-historical START=2019-01-01                  # one-time, full backfill through yesterday
@@ -255,6 +410,11 @@ make pipeline-historical START=2019-01-01 END=2025-12-31    # or bound it explic
 make pipeline-daily                                         # yesterday's SMARD + weather, 8-day forecast
 make pipeline-weekly                                        # retrains + republishes all 3 models
 ```
+
+`orchestration/run_pipeline.py` is local-only: it calls the same
+functions the containers call, in the same order, and exists so the
+full pipeline can be exercised on one machine. In AWS its job belongs
+to Step Functions (sequencing) and EventBridge (scheduling).
 
 `START` is required; `END` is optional and defaults to yesterday, since
 no future SMARD data can ever exist. `pipeline-weekly` retrains from
@@ -267,6 +427,10 @@ so weekly always sees that morning's fresh data. Locally, run
 
 The pipeline is idempotent: re-running a date range skips Parquet files already in S3, and the loader upserts into Postgres so SMARD value revisions are picked up correctly. Forecast weather is re-fetched daily and superseded by the real observed value once that day's normal ingestion runs — the loader's upsert naturally overwrites forecast with actual, no reconciliation step needed.
 
+Every task exits non-zero if any part of its work failed, even when it
+continues past individual failures — that exit code is the only signal
+Step Functions has to work with.
+
 ### Run EDA notebooks
 
 ```bash
@@ -278,8 +442,8 @@ Notebooks in order: `00_data_audit` → `01_energy_mix_history` → `02_renewabl
 ### Train / retrain the ML models
 
 ```bash
-python ml/train_price_model.py
-python ml/train_generation_model.py   # trains both wind and solar
+python -m ml.train_price_model
+python -m ml.train_generation_model   # trains both wind and solar
 ```
 
 Both scripts read `fct_ml_features` from Postgres, train, evaluate against
@@ -315,6 +479,17 @@ docker compose up --build
 Requires `.env` (see "Configure environment" above) — both services load it via `env_file`, so no credentials are duplicated into `docker-compose.yml` itself. Builds `api/Dockerfile` and `dashboard/Dockerfile` and runs both containers on one network — the dashboard reaches the API at `http://api:8000` (Compose's built-in service-name DNS), not `localhost`. API at `http://localhost:8000`, dashboard at `http://localhost:8501`.
 
 `docker-compose.yml` deliberately does **not** include Postgres or LocalStack — those stay the long-lived `make infra-up` containers (see above), reached from inside the `api` container via `host.docker.internal` rather than `localhost`, since `localhost` inside a container refers to the container itself. Run `make infra-up` first if they're not already up. `docker-compose.yml` overrides `ZEPHYRWERK_RDS_HOST` and `AWS_ENDPOINT_URL` on top of `.env` for this reason — `.env`'s `localhost` is correct for native processes, not containers.
+
+The ingestion, dbt and ML images are not in Compose — they are
+run-once jobs rather than services. Build and run them individually:
+
+```bash
+docker build --platform linux/arm64 -t zephyrwerk-ingestion:test -f ingestion/Dockerfile .
+docker run --rm --env-file .env \
+  -e ZEPHYRWERK_RDS_HOST=host.docker.internal \
+  -e AWS_ENDPOINT_URL=http://host.docker.internal:4566 \
+  zephyrwerk-ingestion:test python -m ingestion --task smard
+```
 
 ### Run tests
 
