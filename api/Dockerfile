@@ -13,7 +13,7 @@ COPY ml/ ./ml/
 COPY db/ ./db/
 
 # Install build tools and project dependencies
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --timeout 60 --retries 10 ".[api]"
 
 USER appuser
 
