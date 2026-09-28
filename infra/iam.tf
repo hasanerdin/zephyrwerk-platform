@@ -157,7 +157,7 @@ resource "aws_iam_role_policy" "ecs_task_ml" {
     policy = data.aws_iam_policy_document.ecs_task_ml.json
 }
 
-# ECS task role for Step Functions
+# IAM for Step Functions
 resource "aws_iam_role" "zephyrwerk_step_function_role"{
     name = var.ecs_step_function_name
 
@@ -209,7 +209,7 @@ resource "aws_iam_role_policy" "step_function_designer" {
     policy = data.aws_iam_policy_document.step_function_policies.json
 }
 
-# ECS task role for Scheduler
+# IAM for Scheduler
 resource "aws_iam_role" "zephyrwerk_scheduler_role" {
     name = var.scheduler_name
 
@@ -244,4 +244,86 @@ resource "aws_iam_role_policy" "state_machine_scheduler" {
     name = "start-state-machines"
     role = aws_iam_role.zephyrwerk_scheduler_role.id
     policy = data.aws_iam_policy_document.scheduler_policy.json
+}
+
+# IAM for Github connection
+resource "aws_iam_openid_connect_provider" "github" {
+    url            = "https://token.actions.githubusercontent.com"
+    client_id_list = ["sts.amazonaws.com"]
+}
+
+data "aws_iam_policy_document" "github_policy" {
+    statement {
+        actions = ["sts:AssumeRoleWithWebIdentity"]
+        principals {
+            type        = "Federated"
+            identifiers = [aws_iam_openid_connect_provider.github.arn]
+        }
+        condition {
+            test     = "StringEquals"
+            variable = "token.actions.githubusercontent.com:aud"
+            values   = ["sts.amazonaws.com"]
+        }
+        condition {
+            test = "StringEquals"
+            variable = "token.actions.githubusercontent.com:sub"
+            values   = ["repo:hasanerdin/zephyrwerk-platform:ref:refs/heads/main"]
+        }
+    }
+}
+
+resource "aws_iam_role" "zephyrwerk_github_action_role" {
+    name = var.github_action_name
+
+    assume_role_policy = data.aws_iam_policy_document.github_policy.json
+
+    tags = {
+        Name = var.github_action_name
+        Environment = "dev"
+    }
+}
+
+data "aws_iam_policy_document" "ci_policy" {
+    statement {
+        actions = ["ecr:GetAuthorizationToken"]
+        resources = ["*"]
+    }
+
+    statement {
+        actions = ["ecr:BatchCheckLayerAvailability",
+                   "ecr:InitiateLayerUpload",
+                   "ecr:UploadLayerPart",
+                   "ecr:CompleteLayerUpload",
+                   "ecr:PutImage",
+                   "ecr:BatchGetImage",
+                   "ecr:GetDownloadUrlForLayer"]
+        resources = [for r in aws_ecr_repository.zephyrwerk_ecr : r.arn]
+    }
+
+    statement {
+        actions = ["ecs:DescribeTaskDefinition",
+                   "ecs:RegisterTaskDefinition"]
+        resources = ["*"]
+    }
+
+    statement {
+        actions = ["ecs:UpdateService", "ecs:describeServices"]
+        resources = [aws_ecs_service.api.arn, aws_ecs_service.dashboard.arn]
+    }
+
+    statement {
+        actions = ["iam:PassRole"]
+        resources = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task_ingestion.arn,
+            aws_iam_role.ecs_task_api.arn,
+            aws_iam_role.ecs_task_ml.arn,
+        ]    
+    }
+}
+
+resource "aws_iam_role_policy" "github_ci" {
+    name = "github-ci"
+    role = aws_iam_role.zephyrwerk_github_action_role.id
+    policy = data.aws_iam_policy_document.ci_policy.json
 }

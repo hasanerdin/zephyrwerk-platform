@@ -203,3 +203,9 @@ variable "weekly_schedule_name" {
   type = string
   default = "zephyrwerk-weekly-schedule"
 }
+
+variable "github_action_name" {
+  description = "Name of github action"
+  type = string
+  default = "zephyrwerk-github-action"
+}

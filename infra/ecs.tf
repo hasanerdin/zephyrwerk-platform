@@ -42,6 +42,10 @@ resource "aws_ecs_service" "api" {
       }
     }
   }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_service" "dashboard" {
@@ -60,6 +64,11 @@ resource "aws_ecs_service" "dashboard" {
 
   service_connect_configuration {
     enabled = true
+  }
+
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
 
