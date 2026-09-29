@@ -10,6 +10,7 @@ build/
 # Log
 pipeline.log
 logs
+docs
 
 # Virtual environments / uv
 .venv/
